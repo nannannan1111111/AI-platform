@@ -1,7 +1,7 @@
 # 04 HTTP 安全边界与画布 XSS 加固
 
 Type: task
-Status: open
+Status: claimed
 Stage: 公网安全
 Blocked by: 01
 
@@ -58,3 +58,8 @@ Blocked by: 01
 
 ## Comments
 
+- 2026-08-17：当前稳定版本点为私有仓库 `main` 的 `c719bc3243e9270e15a64c9fcc2142c88c99c2c6`，对应 quality-gate 与 supply-chain 全绿且未发布镜像。按用户要求从该版本继续任务 04。
+- 2026-08-17（问题分析）：确认生产容器使用 `--forwarded-allow-ips='*'`，应用没有 Host 白名单和统一 CSP/安全头；经典与智能画布共有 121 个内联事件属性和 2 段内联主题脚本。经典画布节点头还把工作流节点标题与节点 ID 拼入 `innerHTML`/`onclick`，恶意导入字段可进入 HTML 与脚本字符串上下文。
+- 2026-08-17（设计确认）：生产强制精确 `ALLOWED_HOSTS`，拒绝通配 Host、`0.0.0.0/0`/`::/0` 等全网代理信任；Uvicorn 与认证客户端 IP 解析共享 `TRUSTED_PROXY_CIDRS` 契约。安全头使用全局 ASGI 中间件覆盖路由和静态挂载，HSTS 仅在 `ENABLE_HSTS=true` 且请求已由可信代理判定为 HTTPS 时发送。CSP 执行态锁定同源脚本并设置 `script-src-attr 'none'`；画布动态布局仍需要 `style-src-attr` 兼容，但该例外不进入脚本策略。
+- 2026-08-17（代码修改）：新增集中式 HTTP 安全设置、中间件、TrustedHost 装配、缓存分层及生产配置校验；Docker 不再信任任意代理。121 个静态内联事件迁移为初始 DOM 白名单事件桥，内联主题脚本和 `document.write` 已移除；节点标题使用 `textContent`，删除按钮使用 `addEventListener`，媒体显示 URL 限制为受支持协议。Compose、环境模板、质量脚本和部署文档同步了 Host、代理和 HSTS 契约。
+- 2026-08-17（本地质量检测）：Ruff、严格 MyPy、前端 `npm ci`/类型检查/构建和 Compose 解析通过；全量 Python 为 `578 passed, 5 skipped`，跳过项是 Windows 文件权限与未配置 PostgreSQL 的 4 个迁移/并发用例。真实浏览器中经典画布“展开→上传”使节点数从 0 变为 1，智能画布返回列表正常，控制台无 CSP 违规；未知 Host、HSTS 条件、安全头、缓存、无内联事件/脚本及恶意节点字段均有自动测试。当前权限不能访问 Docker Engine，生产镜像、PostgreSQL 专属测试、SBOM 和漏洞门禁交由 GitHub Actions 最终验证。

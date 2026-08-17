@@ -59,6 +59,8 @@ chmod 600 deploy/.env
 | `AUTH_REGISTER_IP_LIMIT` / `AUTH_REGISTER_WINDOW_SECONDS` | 注册 IP 上限与窗口，默认 `5` 次/`3600` 秒 |
 | `AUTH_EMAIL_VERIFICATION_ACCOUNT_LIMIT` / `AUTH_EMAIL_VERIFICATION_WINDOW_SECONDS` | 每账户重发验证邮件上限与窗口，默认 `3` 次/`3600` 秒 |
 | `TRUSTED_PROXY_CIDRS` | 直接连接应用的可信反向代理网段，逗号分隔；留空时完全忽略 `X-Forwarded-For` |
+| `ALLOWED_HOSTS` | 逗号分隔的精确公网域名，不含协议、路径或通配符；应用自动补充 `127.0.0.1` 和 `localhost` 供本机健康检查 |
+| `ENABLE_HSTS` | 仅在 HTTPS 入口、HTTP 到 HTTPS 跳转和可信代理均验收后设为 `true`；此前保持默认 `false` |
 | `GENERATION_WORKER_REPLICAS` | 图片生成 Worker 数，默认 `4`；不得超过 Provider 并发配额 |
 
 平台管理员可以在“用户管理”中为单个用户设置图片生成执行并发，范围为 `1–20`，默认 `2`。该值持久化在数据库中并由 Worker 动态读取，保存后无需重新部署；超过执行并发的任务保持排队状态。此设置不改变 `MAX_ACTIVE_GENERATION_TASKS` 所控制的单账户排队中加生成中图片总名额。
@@ -66,7 +68,7 @@ chmod 600 deploy/.env
 | `WORKER_DATABASE_MAX_OVERFLOW` | 每个生成 Worker 的临时连接数，默认 `1` |
 | `CREATIVE_STUDIO_PORT` | 绑定到宿主机回环地址的端口，默认 `8000` |
 
-缺少数据库、媒体目录、Provider 密钥目录、管理员白名单或认证限流 HMAC 密钥时，SaaS 进程会拒绝启动。媒体与密钥必须是两个不同目录；它们都只由部署配置决定。Provider Key、SMTP 密码和支付商户密钥由管理员页面写入同一个受控密钥目录，数据库只保存不透明引用。
+缺少数据库、媒体目录、Provider 密钥目录、管理员白名单、认证限流 HMAC 密钥或 `ALLOWED_HOSTS` 时，SaaS 进程会拒绝启动。`ALLOWED_HOSTS` 和 `TRUSTED_PROXY_CIDRS` 禁止 `*`；代理配置还禁止 `0.0.0.0/0`、`::/0` 这类等价全网信任。媒体与密钥必须是两个不同目录；它们都只由部署配置决定。Provider Key、SMTP 密码和支付商户密钥由管理员页面写入同一个受控密钥目录，数据库只保存不透明引用。
 
 ## 准备媒体目录
 
@@ -113,7 +115,11 @@ docker compose --env-file deploy/.env -f deploy/compose.production.yml up -d
 
 端口仅绑定 `127.0.0.1`，应由服务器上的 Caddy、Nginx 或同类反向代理终止 HTTPS；不要把容器 `8000` 端口直接暴露到公网。
 
-认证限流默认只认 TCP 直连来源。反向代理必须追加而不是透传客户端自带的 `X-Forwarded-For`，并把它实际使用的容器网段或回环地址写入 `TRUSTED_PROXY_CIDRS`；不要填写公网大网段或 `0.0.0.0/0`。应用仅在直连来源可信时从右向左剥离可信代理，畸形转发链会整体忽略。登录按 IP 和邮箱 HMAC 摘要共同计数，注册按 IP 计数，验证邮件按账户计数；任何维度超限均返回 429 和 `Retry-After`。计数数据库不可用时这些入口返回 503，不会绕过保护继续认证。
+认证限流默认只认 TCP 直连来源。反向代理必须覆盖客户端传入的 `X-Forwarded-Proto`，并追加而不是透传客户端自带的 `X-Forwarded-For`；把代理实际使用的容器网段或回环地址写入 `TRUSTED_PROXY_CIDRS`，不要填写公网大网段或 `0.0.0.0/0`。Uvicorn 只接受这些来源的转发头；应用仅在直连来源可信时从右向左剥离可信 `X-Forwarded-For`，畸形转发链会整体忽略。登录按 IP 和邮箱 HMAC 摘要共同计数，注册按 IP 计数，验证邮件按账户计数；任何维度超限均返回 429 和 `Retry-After`。计数数据库不可用时这些入口返回 503，不会绕过保护继续认证。
+
+每个响应统一包含 `nosniff`、frame deny、严格 referrer、Permissions Policy、COOP/CORP 与执行态 CSP。HTML 和 API 默认 `no-store`，带内容指纹的静态资源使用一年 immutable 缓存，其他静态资源必须重新验证；媒体下载或 SSE 路由的更具体缓存策略保持优先。CSP 的脚本边界为 `script-src 'self'` 和 `script-src-attr 'none'`，不允许内联脚本或 `unsafe-eval`；经典/智能画布的静态事件已经迁移到受白名单约束的同源脚本。画布仍通过 style 属性表达动态位置、尺寸和 CSS 变量，因此仅 `style-src-attr` 暂时保留内联样式兼容，不能把它扩大到 `script-src`。
+
+只有可信代理把已验证的 TLS 状态传为 `X-Forwarded-Proto: https` 时，请求才会在应用中表现为 HTTPS。任务 05 完成证书、强制跳转和预发布检查后再设置 `ENABLE_HSTS=true`；HSTS 启用后只对 HTTPS 响应发送，伪造转发头或普通 HTTP 请求不会触发。上线检查至少包括：未知 Host 返回 `400`，允许域名正常；HTTP 响应不带 HSTS；HTTPS 响应在显式启用后包含一年 `max-age`；浏览器控制台没有 CSP 违规。
 
 窗口结束即自动解锁，过期行会在后续认证请求中清理。成功登录会清除对应邮箱失败窗口。若错误配置造成大面积误限流，生产负责人可在记录变更和数据库备份后清除相应短时维度，例如 `DELETE FROM auth_rate_limit_windows WHERE action = 'login' AND subject_scope = 'email';`；操作不会修改账户、密码或会话。调整阈值后应先在预发布压测，避免直接以放宽限流处理攻击流量。
 

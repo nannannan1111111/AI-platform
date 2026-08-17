@@ -11,6 +11,15 @@ function isLocalMediaUrl(url) {
     return LOCAL_MEDIA_PREFIXES.some(prefix => url.startsWith(prefix));
 }
 
+function safeBrowserMediaUrl(url) {
+    const raw = String(url || '').trim();
+    if (!raw || raw.startsWith('//')) return '';
+    if (/^https?:\/\//i.test(raw) || /^blob:/i.test(raw)) return raw;
+    if (/^data:(?:image|video|audio)\//i.test(raw)) return raw;
+    if (raw.startsWith('/') || raw.startsWith('./') || raw.startsWith('../')) return raw;
+    return '';
+}
+
 /** 返回媒体预览地址中隐藏的原始 URL。 */
 export function originalMediaUrl(itemOrUrl) {
     const raw = String(mediaUrlValue(itemOrUrl) || '');
@@ -50,7 +59,8 @@ export function proxiedMediaUrl(itemOrUrl, name = '', {proxyUnknown = false} = {
 /** 返回浏览器可展示的 URL，本地媒体仍使用原路径。 */
 export function displayMediaUrl(itemOrUrl, name = '') {
     const raw = originalMediaUrl(itemOrUrl);
-    return /^https?:\/\//i.test(raw) ? proxiedMediaUrl(itemOrUrl, name) : raw;
+    const displayUrl = /^https?:\/\//i.test(raw) ? proxiedMediaUrl(itemOrUrl, name) : raw;
+    return safeBrowserMediaUrl(displayUrl);
 }
 
 /** 为支持的本地图片和视频生成限制尺寸的同源预览地址。 */

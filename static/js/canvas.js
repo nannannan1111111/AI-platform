@@ -6099,16 +6099,41 @@ function renderNode(node){
         else openGeneratorNodeMenu(node.id, e.clientX, e.clientY);
     };
     const unavailableType = String(node.unavailable_type || node.type || 'unknown');
-    const title = node.unavailable ? (langIsEn() ? `Unsupported · ${escapeHtml(unavailableType)}` : `暂不支持 · ${escapeHtml(unavailableType)}`) : node.type === 'image' ? 'Image' : node.type === 'prompt' ? 'Prompt' : node.type === 'loop' ? tr('canvas.loopNode') : node.type === 'promptGroup' ? 'Prompts' : node.type === 'group' ? 'Group' : node.type === 'output' ? 'Output' : node.type === 'llm' ? 'LLM' : node.type === 'rh' ? 'RunningHub' : node.type === 'midjourney' ? 'Midjourney' : node.type === 'msgen' ? tr('canvas.modelscopeGenerate') : node.type === 'video' ? tr('canvas.videoGenerateNode') : tr('canvas.apiGenerate');
+    const title = node.unavailable ? (langIsEn() ? `Unsupported · ${unavailableType}` : `暂不支持 · ${unavailableType}`) : node.type === 'image' ? 'Image' : node.type === 'prompt' ? 'Prompt' : node.type === 'loop' ? tr('canvas.loopNode') : node.type === 'promptGroup' ? 'Prompts' : node.type === 'group' ? 'Group' : node.type === 'output' ? 'Output' : node.type === 'llm' ? 'LLM' : node.type === 'rh' ? 'RunningHub' : node.type === 'midjourney' ? 'Midjourney' : node.type === 'msgen' ? tr('canvas.modelscopeGenerate') : node.type === 'video' ? tr('canvas.videoGenerateNode') : tr('canvas.apiGenerate');
     const displayTitle = node.type === 'image' && node.url ? nodeTitleForMedia(node) : title;
     // 失败徽章只在一键运行模式中显示，单节点失败已通过 alert 提示
     const showStatus = ['generator','midjourney','msgen','llm','video','rh'].includes(node.type) && node.runStatus
         && (node.runStatus !== 'failed' || node._cascadeFailed);
-    const statusHtml = showStatus ? (() => {
-        const label = { queued:'正在排队', running:'正在生图', done:'完成', failed:'失败' }[node.runStatus] || '';
-        return `<span class="node-run-status ${node.runStatus}"><span class="dot"></span>${escapeHtml(label)}${node._cascadeIdx?' '+node._cascadeIdx:''}</span>`;
-    })() : '';
-    el.innerHTML = `<div class="node-head"><span class="node-title">${displayTitle}</span><div style="display:flex;align-items:center;gap:8px">${statusHtml}<button onclick="deleteNodeFromButton('${node.id}', event)" class="text-gray-300 hover:text-red-500"><i data-lucide="x" class="w-4 h-4"></i></button></div></div>`;
+    const head = document.createElement('div');
+    head.className = 'node-head';
+    const titleElement = document.createElement('span');
+    titleElement.className = 'node-title';
+    titleElement.textContent = String(displayTitle);
+    head.appendChild(titleElement);
+    const headActions = document.createElement('div');
+    headActions.className = 'node-head-actions';
+    if(showStatus && ['queued','running','done','failed'].includes(node.runStatus)) {
+        const statusElement = document.createElement('span');
+        statusElement.classList.add('node-run-status', node.runStatus);
+        const dot = document.createElement('span');
+        dot.className = 'dot';
+        statusElement.appendChild(dot);
+        const label = { queued:'正在排队', running:'正在生图', done:'完成', failed:'失败' }[node.runStatus];
+        statusElement.appendChild(document.createTextNode(`${label}${node._cascadeIdx ? ` ${node._cascadeIdx}` : ''}`));
+        headActions.appendChild(statusElement);
+    }
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'text-gray-300 hover:text-red-500';
+    deleteButton.setAttribute('aria-label', langIsEn() ? 'Delete node' : '删除节点');
+    const deleteIcon = document.createElement('i');
+    deleteIcon.dataset.lucide = 'x';
+    deleteIcon.className = 'w-4 h-4';
+    deleteButton.appendChild(deleteIcon);
+    deleteButton.addEventListener('click', event => deleteNodeFromButton(node.id, event));
+    headActions.appendChild(deleteButton);
+    head.appendChild(headActions);
+    el.appendChild(head);
     const body = document.createElement('div');
     body.className = 'node-body';
     if(node.type === 'image') {

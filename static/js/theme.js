@@ -21,47 +21,7 @@
     }
 
     function ensureScaleStyle(){
-        if(document.getElementById('studio-scale-style')) return;
-        const style = document.createElement('style');
-        style.id = 'studio-scale-style';
-        style.textContent = `
-            html.studio-scale-managed {
-                --studio-ui-scale: 1;
-            }
-            html.studio-ui-scaled,
-            html.studio-ui-scaled body {
-                overscroll-behavior-x: none;
-            }
-            html.studio-ui-scaled {
-                overflow-x: hidden !important;
-            }
-            html.studio-ui-scaled::-webkit-scrollbar:horizontal,
-            html.studio-ui-scaled body::-webkit-scrollbar:horizontal {
-                height: 0 !important;
-            }
-            html.studio-ui-scaled body:not(.studio-scale-host) {
-                width: calc(100% / var(--studio-ui-scale)) !important;
-                min-height: calc(100vh / var(--studio-ui-scale)) !important;
-                transform: scale(var(--studio-ui-scale));
-                transform-origin: 0 0;
-            }
-            html.studio-ui-scaled body.studio-scale-viewport:not(.studio-scale-host) {
-                height: calc(100vh / var(--studio-ui-scale)) !important;
-            }
-            html.studio-ui-scaled body:not(.studio-scale-host) > .app-shell,
-            html.studio-ui-scaled body:not(.studio-scale-host) > .shell,
-            html.studio-ui-scaled body:not(.studio-scale-host) > .asset-page {
-                width: 100% !important;
-            }
-            html.studio-ui-scaled body:not(.studio-scale-host) > .app-shell,
-            html.studio-ui-scaled body:not(.studio-scale-host) > .shell {
-                height: calc(100vh / var(--studio-ui-scale)) !important;
-            }
-            html.studio-ui-scaled body:not(.studio-scale-host) > .asset-page {
-                min-height: calc(100vh / var(--studio-ui-scale)) !important;
-            }
-        `;
-        document.head.appendChild(style);
+        // CSP-compatible scale rules are loaded from csp-utilities.css.
     }
 
     function isFramed(){

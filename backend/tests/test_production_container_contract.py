@@ -15,6 +15,8 @@ def test_root_dockerfile_builds_and_runs_the_saas_backend() -> None:
     assert "${WEB_CONCURRENCY:-4}" in dockerfile
     assert "--limit-concurrency ${WEB_MAX_CONNECTIONS:-400}" in dockerfile
     assert "/readyz" in dockerfile
+    assert "--forwarded-allow-ips='*'" not in dockerfile
+    assert '--forwarded-allow-ips=\\"${TRUSTED_PROXY_CIDRS:-127.0.0.1}\\"' in dockerfile
     assert "creative_studio.bootstrap.runtime:app" not in dockerfile
 
 
@@ -35,6 +37,8 @@ def test_production_compose_mounts_media_and_runs_migrations_separately() -> Non
     assert "AUTH_RATE_LIMIT_HASH_KEY" in compose
     assert "AUTH_LOGIN_EMAIL_LIMIT" in compose
     assert "TRUSTED_PROXY_CIDRS" in compose
+    assert "ALLOWED_HOSTS" in compose
+    assert "ENABLE_HSTS" in compose
     assert "GENERATION_SUBMISSION_MODE: queued" in compose
 
 
@@ -94,6 +98,8 @@ def test_production_environment_example_matches_the_supported_defaults() -> None
     assert "AUTH_REGISTER_IP_LIMIT=5" in environment_example
     assert "AUTH_EMAIL_VERIFICATION_ACCOUNT_LIMIT=3" in environment_example
     assert "TRUSTED_PROXY_CIDRS=" in environment_example
+    assert "ALLOWED_HOSTS=studio.example.com" in environment_example
+    assert "ENABLE_HSTS=false" in environment_example
     assert "PUBLIC_BASE_URL" not in environment_example
     assert "SMTP_PASSWORD" not in environment_example
     assert "CREATIVE_STUDIO_PORT=2020" not in environment_example

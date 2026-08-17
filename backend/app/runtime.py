@@ -9,6 +9,7 @@ from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from ipaddress import ip_network
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -33,7 +34,8 @@ from app.email_settings import SqlAlchemyEmailSettings
 from app.generation import GenerationDeadlineScheduler, SqlAlchemyGenerationTasks
 from app.generation_attempts import GenerationAttemptSubmitter, SqlAlchemyGenerationAttempts
 from app.generation_results import GenerationImageDelivery
-from app.http import create_app
+from app.http import HttpSecuritySettings, create_app
+from app.http.security import validate_allowed_hosts
 from app.media import (
     MediaContentStore,
     SqlAlchemyGeneratedMedia,
@@ -82,6 +84,8 @@ class ProductionSettings:
     auth_rate_limit_hash_key: str
     auth_abuse_policies: AuthAbusePolicies
     trusted_proxy_cidrs: tuple[str, ...]
+    allowed_hosts: tuple[str, ...]
+    enable_hsts: bool
 
     @classmethod
     def from_environ(cls, environ: Mapping[str, str] | None = None) -> ProductionSettings:
@@ -144,8 +148,16 @@ class ProductionSettings:
         )
         try:
             ClientIpResolver(trusted_proxy_cidrs)
+            if any(ip_network(value, strict=False).prefixlen == 0 for value in trusted_proxy_cidrs):
+                raise ValueError("all-address networks are unsafe")
         except ValueError as exc:
-            raise ProductionConfigurationError("TRUSTED_PROXY_CIDRS must contain valid IP networks") from exc
+            raise ProductionConfigurationError(
+                "TRUSTED_PROXY_CIDRS must contain specific valid IP networks, not all-address networks"
+            ) from exc
+        try:
+            allowed_hosts = validate_allowed_hosts(values.get("ALLOWED_HOSTS", "").split(","))
+        except ValueError as exc:
+            raise ProductionConfigurationError("ALLOWED_HOSTS must contain exact public host names") from exc
         auth_abuse_policies = AuthAbusePolicies(
             login_ip=RateLimitPolicy(
                 _positive_int(values, "AUTH_LOGIN_IP_LIMIT", 10),
@@ -179,6 +191,8 @@ class ProductionSettings:
             auth_rate_limit_hash_key=auth_rate_limit_hash_key,
             auth_abuse_policies=auth_abuse_policies,
             trusted_proxy_cidrs=trusted_proxy_cidrs,
+            allowed_hosts=allowed_hosts,
+            enable_hsts=_boolean(values, "ENABLE_HSTS", False),
         )
 
 
@@ -210,6 +224,13 @@ def _positive_float(values: Mapping[str, str], name: str, default: float) -> flo
     if value <= 0:
         raise ProductionConfigurationError(f"{name} must be a positive number")
     return value
+
+
+def _boolean(values: Mapping[str, str], name: str, default: bool) -> bool:
+    configured = values.get(name, "true" if default else "false").strip().casefold()
+    if configured not in {"true", "false"}:
+        raise ProductionConfigurationError(f"{name} must be true or false")
+    return configured == "true"
 
 
 def account_admin_authorizer(
@@ -458,6 +479,10 @@ def _compose_application(
         auth_abuse_protection=auth_abuse_protection,
         auth_abuse_policies=settings.auth_abuse_policies,
         client_ip_resolver=ClientIpResolver(settings.trusted_proxy_cidrs),
+        http_security=HttpSecuritySettings(
+            allowed_hosts=settings.allowed_hosts,
+            enable_hsts=settings.enable_hsts,
+        ),
     )
     app.state.generation_tasks = generation_tasks
     app.state.generation_attempt_submissions = generation_attempt_submissions

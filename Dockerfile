@@ -69,4 +69,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3).read()"]
 
-CMD ["sh", "-c", "exec python -m uvicorn --factory app.runtime:create_production_app --host 0.0.0.0 --port 8000 --workers ${WEB_CONCURRENCY:-4} --limit-concurrency ${WEB_MAX_CONNECTIONS:-400} --backlog ${WEB_BACKLOG:-2048} --timeout-keep-alive 5 --proxy-headers --forwarded-allow-ips='*'"]
+CMD ["sh", "-c", "exec python -m uvicorn --factory app.runtime:create_production_app --host 0.0.0.0 --port 8000 --workers ${WEB_CONCURRENCY:-4} --limit-concurrency ${WEB_MAX_CONNECTIONS:-400} --backlog ${WEB_BACKLOG:-2048} --timeout-keep-alive 5 --proxy-headers --forwarded-allow-ips=\"${TRUSTED_PROXY_CIDRS:-127.0.0.1}\""]

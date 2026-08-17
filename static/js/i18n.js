@@ -7,13 +7,9 @@
         '/static/js/i18n/canvas.js',
         '/static/js/i18n/smart-canvas.js',
     ];
-    const tags = scripts.map(src => '<script src="' + src + '?v=' + VERSION + '"></script>').join('');
-    if(document.readyState === 'loading' && document.currentScript){
-        document.write(tags);
-        return;
-    }
     scripts.reduce((promise, src) => promise.then(() => new Promise((resolve, reject) => {
         const script = document.createElement('script');
+        script.async = false;
         script.src = src + '?v=' + VERSION;
         script.onload = resolve;
         script.onerror = reject;

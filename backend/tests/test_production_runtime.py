@@ -85,6 +85,7 @@ def test_production_settings_parse_explicit_deployment_values(tmp_path: Path) ->
             "PLATFORM_ADMIN_EMAILS": " Admin@Example.com,ops@example.com ",
             "MAX_ACTIVE_GENERATION_TASKS": "7",
             "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
+            "ALLOWED_HOSTS": "studio.example.com",
         }
     )
 
@@ -101,6 +102,8 @@ def test_production_settings_parse_explicit_deployment_values(tmp_path: Path) ->
     assert settings.auth_abuse_policies.login_ip.limit == 10
     assert settings.auth_abuse_policies.login_email.limit == 5
     assert settings.trusted_proxy_cidrs == ()
+    assert settings.allowed_hosts == ("studio.example.com", "127.0.0.1", "localhost")
+    assert settings.enable_hsts is False
 
 
 def test_production_settings_default_to_twenty_active_image_units(tmp_path: Path) -> None:
@@ -111,6 +114,7 @@ def test_production_settings_default_to_twenty_active_image_units(tmp_path: Path
             "PROVIDER_SECRETS_ROOT": str(tmp_path / "provider-secrets"),
             "PLATFORM_ADMIN_EMAILS": "admin@example.com",
             "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
+            "ALLOWED_HOSTS": "studio.example.com",
         }
     )
 
@@ -130,6 +134,7 @@ def test_production_settings_parse_capacity_controls(tmp_path: Path) -> None:
             "GENERATION_SUBMISSION_MODE": "inline",
             "GENERATION_WORKER_DEPLOYED_LIMIT": "8",
             "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
+            "ALLOWED_HOSTS": "studio.example.com",
         }
     )
 
@@ -156,6 +161,7 @@ def test_production_settings_reject_invalid_capacity_controls(tmp_path: Path, na
         "PROVIDER_SECRETS_ROOT": str(tmp_path / "provider-secrets"),
         "PLATFORM_ADMIN_EMAILS": "admin@example.com",
         "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
+        "ALLOWED_HOSTS": "studio.example.com",
         name: value,
     }
     with pytest.raises(ProductionConfigurationError, match=name):
@@ -173,6 +179,7 @@ def test_production_settings_reject_invalid_generation_limit(tmp_path: Path, con
                 "PLATFORM_ADMIN_EMAILS": "admin@example.com",
                 "MAX_ACTIVE_GENERATION_TASKS": configured,
                 "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
+                "ALLOWED_HOSTS": "studio.example.com",
             }
         )
 
@@ -197,12 +204,37 @@ def test_production_settings_validate_trusted_proxy_networks(tmp_path: Path) -> 
         "PROVIDER_SECRETS_ROOT": str(tmp_path / "provider-secrets"),
         "PLATFORM_ADMIN_EMAILS": "admin@example.com",
         "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
+        "ALLOWED_HOSTS": "studio.example.com",
     }
 
     settings = ProductionSettings.from_environ({**base, "TRUSTED_PROXY_CIDRS": "127.0.0.1/32, 10.0.0.0/8"})
     assert settings.trusted_proxy_cidrs == ("127.0.0.1/32", "10.0.0.0/8")
     with pytest.raises(ProductionConfigurationError, match="TRUSTED_PROXY_CIDRS"):
         ProductionSettings.from_environ({**base, "TRUSTED_PROXY_CIDRS": "not-a-network"})
+    with pytest.raises(ProductionConfigurationError, match="TRUSTED_PROXY_CIDRS"):
+        ProductionSettings.from_environ({**base, "TRUSTED_PROXY_CIDRS": "0.0.0.0/0"})
+
+
+def test_production_settings_require_exact_hosts_and_parse_hsts(tmp_path: Path) -> None:
+    base = {
+        "DATABASE_URL": "postgresql+psycopg://example.invalid/app",
+        "GENERATED_MEDIA_ROOT": str(tmp_path),
+        "PROVIDER_SECRETS_ROOT": str(tmp_path / "provider-secrets"),
+        "PLATFORM_ADMIN_EMAILS": "admin@example.com",
+        "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
+    }
+
+    with pytest.raises(ProductionConfigurationError, match="ALLOWED_HOSTS"):
+        ProductionSettings.from_environ(base)
+    with pytest.raises(ProductionConfigurationError, match="ALLOWED_HOSTS"):
+        ProductionSettings.from_environ({**base, "ALLOWED_HOSTS": "*.example.com"})
+    settings = ProductionSettings.from_environ(
+        {**base, "ALLOWED_HOSTS": "Studio.Example.com", "ENABLE_HSTS": "true"}
+    )
+    assert settings.allowed_hosts == ("studio.example.com", "127.0.0.1", "localhost")
+    assert settings.enable_hsts is True
+    with pytest.raises(ProductionConfigurationError, match="ENABLE_HSTS"):
+        ProductionSettings.from_environ({**base, "ALLOWED_HOSTS": "studio.example.com", "ENABLE_HSTS": "yes"})
 
 
 def test_admin_authorizer_uses_authenticated_account_email_allowlist() -> None:
@@ -300,6 +332,7 @@ def test_production_app_wires_provider_management_and_generation_submission(tmp_
             "PROVIDER_SECRETS_ROOT": str(provider_secrets_root),
             "PLATFORM_ADMIN_EMAILS": "admin@example.com",
             "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
+            "ALLOWED_HOSTS": "studio.example.com",
         }
     )
 

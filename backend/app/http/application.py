@@ -99,6 +99,7 @@ from app.generation_attempts import (
     GenerationAttemptReconciliations,
     GenerationAttemptSubmissions,
 )
+from app.http.security import HttpSecuritySettings, install_http_security
 from app.media import (
     MAX_STORAGE_ALLOWANCE_BYTES,
     CanvasMediaUpload,
@@ -869,10 +870,12 @@ def create_app(
     auth_abuse_protection: AuthAbuseProtection | None = None,
     auth_abuse_policies: AuthAbusePolicies | None = None,
     client_ip_resolver: ClientIpResolver | None = None,
+    http_security: HttpSecuritySettings | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> FastAPI:
     """创建只依赖账户 Interface 的 FastAPI 应用。"""
     app = FastAPI(title="乐云工坊 SaaS")
+    install_http_security(app, http_security or HttpSecuritySettings())
     abuse_policies = auth_abuse_policies or AuthAbusePolicies.defaults()
     resolve_client_ip = client_ip_resolver or ClientIpResolver()
     app.state.auth_abuse_protection = auth_abuse_protection

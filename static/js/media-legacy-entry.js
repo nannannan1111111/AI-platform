@@ -7,7 +7,8 @@ if (!['canvas.js', 'smart-canvas.js'].includes(entry)) {
     throw new Error('Unsupported legacy media entry');
 }
 
-// Commit 70 才迁移页面全局函数；此前通过该桥接保留内联事件契约，同时让共享媒体实现保持 ES Module。
+// The legacy editors still expose global functions, while their static controls are bound
+// through csp-event-bridge.js so the pages do not require inline script handlers.
 globalThis.StudioMedia = Object.freeze({...media});
 const script = document.createElement('script');
 script.async = false;
