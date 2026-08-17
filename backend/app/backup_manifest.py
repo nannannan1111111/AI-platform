@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -118,11 +119,20 @@ def read_manifest(source: Path) -> BackupManifest:
     return manifest
 
 
-def verify_manifest(source: Path) -> tuple[BackupFile, ...]:
-    """Verify every local artifact digest and return the checked entries."""
+def verify_manifest(
+    source: Path,
+    *,
+    path_overrides: Mapping[str, Path] | None = None,
+) -> tuple[BackupFile, ...]:
+    """Verify every artifact, optionally mapping names into an isolated restore root."""
     manifest = read_manifest(source)
+    overrides = dict(path_overrides or {})
+    known_names = {entry.name for entry in manifest.files}
+    unknown_names = set(overrides) - known_names
+    if unknown_names:
+        raise BackupManifestError(f"unknown backup artifact mapping: {sorted(unknown_names)[0]}")
     for entry in manifest.files:
-        path = Path(entry.path)
+        path = overrides.get(entry.name, Path(entry.path))
         if path.is_symlink() or not path.is_file():
             raise BackupManifestError(f"backup artifact is missing: {path}")
         digest, size = _sha256(path)

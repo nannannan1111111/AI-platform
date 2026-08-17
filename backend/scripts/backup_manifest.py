@@ -24,10 +24,17 @@ def main() -> int:
     create.add_argument("--file", action="append", default=[], metavar="NAME=PATH")
     verify = subparsers.add_parser("verify")
     verify.add_argument("manifest", type=Path)
+    verify.add_argument("--file", action="append", default=[], metavar="NAME=PATH", help="map an artifact into an isolated restore directory")
     args = parser.parse_args()
     try:
         if args.command == "verify":
-            entries = verify_manifest(args.manifest)
+            overrides: dict[str, Path] = {}
+            for value in args.file:
+                name, separator, path = value.partition("=")
+                if not separator or not name or not path or name in overrides:
+                    raise BackupManifestError("--file must use each NAME=PATH mapping once")
+                overrides[name] = Path(path)
+            entries = verify_manifest(args.manifest, path_overrides=overrides)
             print(f"verified {len(entries)} backup artifacts")
             return 0
         files: list[tuple[str, Path]] = []

@@ -185,6 +185,15 @@ python scripts/backup_manifest.py create \
 python scripts/backup_manifest.py verify /secure-backups/recovery-point.json
 ```
 
+隔离恢复时不要直接信任 manifest 中原主机路径，可把恢复后的文件显式映射到隔离目录再校验：
+
+```bash
+python scripts/backup_manifest.py verify /secure-backups/recovery-point.json \
+  --file database=/srv/isolated/database.dump \
+  --file media=/srv/isolated/media.snapshot \
+  --file secrets=/srv/isolated/secrets.snapshot
+```
+
 该工具只负责 manifest、SHA-256 和本地文件校验，不会替代 TencentDB PITR、COS 快照、KMS 加密或隔离环境恢复演练；这些仍需云端凭据和真实资源后验收。
 
 数据库、媒体目录与 Provider 密钥目录必须成对恢复。只恢复数据库会留下缺失图片和不可读 Provider 引用，只恢复目录会失去账户归属与引用关系。所有备份都应加密并限制访问；不要把数据库密码、会话、支付凭据或 Provider Key 写入普通日志或仓库。
