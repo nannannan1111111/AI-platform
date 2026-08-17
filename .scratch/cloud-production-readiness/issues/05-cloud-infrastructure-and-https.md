@@ -91,6 +91,7 @@ Blocked by: 02, 03, 04
 - 前端 `npm ci`、类型检查和构建通过，提交产物无漂移；Alembic 单 head、Production Compose 和生产镜像构建通过。本地候选 manifest list 为 `sha256:773021d033780ce99e3796100b0a50ad3f437e0952b274a68211c263f900a477`，仅作本地门禁证据，未发布。
 - 定向腾讯云/CI/Production 契约为 `19 passed`；临时 PostgreSQL 17 容器已清理，没有创建标签、Release、GHCR/TCR 镜像或腾讯云收费资源。
 - PR #6 首次远端供应链运行正确阻断了不可重现的开发锁：更新命令写既有文件时保留 `pygments 2.20.0`，检查命令写临时新文件时解析到 `2.21.0`。锁编译现统一显式使用 `--upgrade`，陈旧检查同时输出两侧 SHA-256 与截断 diff；重新生成后固定解析检查通过。该修复只更新生产锁的可复现命令头和开发锁中的 Pygments，不改变应用生产依赖。
+- 修复提交 `1c4e3cab8af8fc419ec7a991ab4f1eb4d122a502` 的 PR 流水线已全绿：[`quality-gate` 32013790047](https://github.com/nannannan1111111/AI-platform/actions/runs/32013790047) 的 PostgreSQL 17 完整测试、Ruff、严格 MyPy、前端、生产镜像、Compose、迁移和 OpenTofu 最终 `release-gate` 通过；[`supply-chain` 32013789946](https://github.com/nannannan1111111/AI-platform/actions/runs/32013789946) 的锁重现、SBOM、Trivy Critical/High 阻断和最终 `supply-chain-gate` 通过。发布 Job 正确跳过，未发布镜像。
 
 #### 尚未完成的真实云验收
 
