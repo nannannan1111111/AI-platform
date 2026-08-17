@@ -70,9 +70,12 @@ def test_supply_chain_workflow_generates_evidence_blocks_vulnerabilities_and_sig
     assert "./scripts/update-python-locks.ps1 -Check" in workflow
     assert "run: mkdir -p artifacts" in workflow
     assert "format: spdx-json" in workflow
-    assert "severity: CRITICAL,HIGH" in workflow
-    assert 'exit-code: "1"' in workflow
-    assert "ignore-unfixed: false" in workflow
+    assert "ghcr.io/aquasecurity/trivy:0.65.0@sha256:" in workflow
+    assert "aquasecurity/trivy-action@" not in workflow
+    assert "--severity CRITICAL,HIGH" in workflow
+    assert "--exit-code 1" in workflow
+    assert "--ignore-unfixed=false" in workflow
+    assert "--ignorefile /workspace/.trivyignore.yaml" in workflow
     assert "name: publish-signed-image" in workflow
     assert "startsWith(github.ref, 'refs/tags/v')" in workflow
     assert "id-token: write" in workflow

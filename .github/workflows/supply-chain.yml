@@ -18,6 +18,7 @@ concurrency:
 
 env:
   VALIDATION_IMAGE: creative-studio:supply-chain-candidate
+  TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436
 
 jobs:
   validate:
@@ -51,15 +52,19 @@ jobs:
           format: spdx-json
           output-file: artifacts/creative-studio.spdx.json
       - name: Block unapproved Critical or High vulnerabilities
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
-        with:
-          image-ref: ${{ env.VALIDATION_IMAGE }}
-          format: sarif
-          output: artifacts/trivy.sarif
-          severity: CRITICAL,HIGH
-          exit-code: "1"
-          ignore-unfixed: false
-          trivyignores: .trivyignore.yaml
+        shell: bash
+        run: |
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$PWD:/workspace" \
+            "$TRIVY_IMAGE" image \
+            --format sarif \
+            --output /workspace/artifacts/trivy.sarif \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --ignore-unfixed=false \
+            --ignorefile /workspace/.trivyignore.yaml \
+            "$VALIDATION_IMAGE"
       - name: Upload SBOM and vulnerability report
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
