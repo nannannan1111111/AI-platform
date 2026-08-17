@@ -104,3 +104,9 @@ Blocked by: 01
 - 当前快照没有 `.git` 和真实 GitHub 仓库，无法触发版本标签流水线、推送 GHCR 或取得 GitHub OIDC 身份。
 - 因而尚未产生真实远端镜像 digest、registry SBOM/provenance attestation 和可在线验证的 Cosign 签名，也未能设置 `supply-chain-gate` 分支保护。
 - 工单保持 `claimed`。获得仓库地址、默认分支及 GitHub/GHCR 权限后，应推送一次候选版本标签，保存 digest 和验签输出，再满足“每个生产摘要都有 SBOM、扫描报告和可验证签名”的完成标准。
+
+### 2026-08-17 GitHub 接入进展
+
+- 已确定远端为 `nannannan1111111/AI-platform`、默认分支为 `main`；本地供应链工作流已包含普通提交的构建/扫描门禁，以及 `v*` 标签触发的 GHCR 推送、provenance、SBOM 和 Cosign keyless 签名。
+- 首次提交已创建为 `b11ad41`，但当前环境无法连接 `github.com:443`，且当前 Codex 进程没有 GitHub CLI 登录态，因此尚未获得真实 Actions、GHCR 和 Cosign 证明。
+- 用户提供的测试发布选项仍是“允许/暂不允许”二选一原文，未形成单一授权结论。在用户明确选择“允许”前，不创建 `v0.1.0-rc.1`，也不触发 GHCR 发布。

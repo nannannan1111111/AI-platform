@@ -98,3 +98,9 @@ Stage: 发布可信
 - 需要真实 GitHub/GitLab 仓库地址、默认分支和管理员权限，才能运行一次干净远端流水线并完成前端产物漂移故障演练。
 - 需要在默认分支启用必需检查 `release-gate`、禁止直接 push/管理员绕过并启用 Pull Request 审批。
 - 上述两项属于仓库平台状态，当前源码快照无法代替配置和取证。因此工单保持 `claimed`，不得宣称已满足“所有 PR 强制门禁”的完成标准。
+
+### 2026-08-17 GitHub 接入进展
+
+- 已确认托管仓库为 `nannannan1111111/AI-platform`，默认分支为 `main`，并获得初始化 Git、提交、推送、运行 Actions 和配置分支保护的授权。
+- 已初始化本地 Git、配置 `origin`，完成首次提交 `b11ad41`。提交前已排除本机数据库 dump、部署状态文件和完整回滚源码快照；这些备份仍保留在工作区。
+- 暂未推送：当前 Codex 进程的 `gh auth status` 显示未登录，同时 `github.com:443` TCP 检测失败。恢复网络并在当前终端建立 GitHub CLI 登录态后，再推送 `main`、运行 Actions 并将 `release-gate` 配置为必需检查。
