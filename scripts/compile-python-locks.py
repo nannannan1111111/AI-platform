@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import difflib
+import hashlib
 import os
 import subprocess
 import sys
@@ -11,10 +13,10 @@ from pathlib import Path
 
 PIP_TOOLS_VERSION = "7.5.2"
 LOCKS = (
-    ("requirements.lock", (), "python -m piptools compile --generate-hashes --strip-extras "
+    ("requirements.lock", (), "python -m piptools compile --upgrade --generate-hashes --strip-extras "
      "--output-file requirements.lock pyproject.toml"),
-    ("requirements-dev.lock", ("--extra", "dev"), "python -m piptools compile --extra dev --generate-hashes "
-     "--strip-extras --output-file requirements-dev.lock pyproject.toml"),
+    ("requirements-dev.lock", ("--extra", "dev"), "python -m piptools compile --upgrade --extra dev "
+     "--generate-hashes --strip-extras --output-file requirements-dev.lock pyproject.toml"),
 )
 
 
@@ -32,6 +34,7 @@ def _compile(output: Path, extras: tuple[str, ...], display_command: str) -> Non
             "piptools",
             "compile",
             *extras,
+            "--upgrade",
             "--generate-hashes",
             "--strip-extras",
             "--resolver",
@@ -74,8 +77,27 @@ def main() -> int:
                 candidate = temporary_root / filename
                 _compile(candidate, extras, command)
                 committed = backend_root / filename
-                if not committed.is_file() or candidate.read_bytes() != committed.read_bytes():
+                candidate_bytes = candidate.read_bytes()
+                committed_bytes = committed.read_bytes() if committed.is_file() else b""
+                if candidate_bytes != committed_bytes:
                     stale.append(filename)
+                    print(
+                        f"{filename}: committed sha256={hashlib.sha256(committed_bytes).hexdigest()} "
+                        f"candidate sha256={hashlib.sha256(candidate_bytes).hexdigest()}",
+                        file=sys.stderr,
+                    )
+                    difference = difflib.unified_diff(
+                        committed_bytes.decode().splitlines(),
+                        candidate_bytes.decode().splitlines(),
+                        fromfile=f"committed/{filename}",
+                        tofile=f"candidate/{filename}",
+                        lineterm="",
+                    )
+                    for index, line in enumerate(difference):
+                        if index >= 80:
+                            print("... diff truncated ...", file=sys.stderr)
+                            break
+                        print(line, file=sys.stderr)
             if stale:
                 print(f"Stale Python lock files: {', '.join(stale)}", file=sys.stderr)
                 return 1

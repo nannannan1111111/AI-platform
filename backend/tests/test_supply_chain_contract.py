@@ -42,6 +42,11 @@ def test_python_locks_pin_and_hash_every_resolved_dependency() -> None:
     assert declared_production | declared_development <= development_names
     assert declared_development.isdisjoint(production_names)
 
+    compiler = _read("scripts/compile-python-locks.py")
+    assert '"--upgrade"' in compiler
+    assert "committed sha256=" in compiler
+    assert "candidate sha256=" in compiler
+
 
 def test_production_image_uses_pinned_multistage_inputs_and_locked_dependencies() -> None:
     dockerfile = _read("Dockerfile")

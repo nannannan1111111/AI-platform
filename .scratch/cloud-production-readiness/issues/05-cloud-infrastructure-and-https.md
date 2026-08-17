@@ -90,6 +90,7 @@ Blocked by: 02, 03, 04
 - Ruff 通过；严格 MyPy 对 136 个源文件通过；PostgreSQL 17 完整后端回归为 `589 passed, 1 skipped`，唯一跳过仍是 Windows 无法表达 Linux mode bits 的权限契约。
 - 前端 `npm ci`、类型检查和构建通过，提交产物无漂移；Alembic 单 head、Production Compose 和生产镜像构建通过。本地候选 manifest list 为 `sha256:773021d033780ce99e3796100b0a50ad3f437e0952b274a68211c263f900a477`，仅作本地门禁证据，未发布。
 - 定向腾讯云/CI/Production 契约为 `19 passed`；临时 PostgreSQL 17 容器已清理，没有创建标签、Release、GHCR/TCR 镜像或腾讯云收费资源。
+- PR #6 首次远端供应链运行正确阻断了不可重现的开发锁：更新命令写既有文件时保留 `pygments 2.20.0`，检查命令写临时新文件时解析到 `2.21.0`。锁编译现统一显式使用 `--upgrade`，陈旧检查同时输出两侧 SHA-256 与截断 diff；重新生成后固定解析检查通过。该修复只更新生产锁的可复现命令头和开发锁中的 Pygments，不改变应用生产依赖。
 
 #### 尚未完成的真实云验收
 
