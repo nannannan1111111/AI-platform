@@ -41,6 +41,9 @@ jobs:
             SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
             VCS_REF=${{ github.sha }}
             VERSION=${{ github.ref_name }}
+      - name: Prepare evidence directory
+        shell: bash
+        run: mkdir -p artifacts
       - name: Create SPDX JSON SBOM
         uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
         with:

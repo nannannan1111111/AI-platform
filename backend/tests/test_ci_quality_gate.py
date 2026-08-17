@@ -40,7 +40,16 @@ def test_frontend_ci_reinstalls_checks_builds_and_detects_artifact_drift() -> No
     assert "Invoke-Checked npm ci" in script
     assert "Invoke-Checked npm run check" in script
     assert "Invoke-Checked npm run build" in script
-    assert "git -C $RepositoryRoot diff --exit-code -- backend/app/webui/static/admin-vue" in script
+    assert 'Invoke-Checked -Command git -Arguments @("-C", $RepositoryRoot, "diff", "--exit-code", "--", "backend/app/webui/static/admin-vue")' in script
+
+
+def test_runtime_data_ignores_do_not_hide_source_packages() -> None:
+    ignore = _read(".gitignore")
+
+    for directory in ("data", "media", "storage", "generated-media", "provider-secrets"):
+        assert f"/{directory}/" in ignore
+        assert f"\n{directory}/" not in ignore
+    assert (REPOSITORY_ROOT / "backend/app/media/__init__.py").is_file()
 
 
 def test_production_gate_requires_one_migration_head_compose_and_image_build() -> None:

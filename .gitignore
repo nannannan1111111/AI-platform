@@ -14,11 +14,11 @@ frontend/admin/.vite/
 !.env.example
 deploy/.env
 
-data/
-media/
-storage/
-generated-media/
-provider-secrets/
+/data/
+/media/
+/storage/
+/generated-media/
+/provider-secrets/
 *.log
 
 # Local deployment backups and runtime state

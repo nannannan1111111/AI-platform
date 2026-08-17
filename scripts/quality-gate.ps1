@@ -89,7 +89,7 @@ function Invoke-FrontendQuality {
 
     $GitDirectory = Join-Path $RepositoryRoot ".git"
     if (Test-Path -LiteralPath $GitDirectory) {
-        Invoke-Checked git -C $RepositoryRoot diff --exit-code -- backend/app/webui/static/admin-vue
+        Invoke-Checked -Command git -Arguments @("-C", $RepositoryRoot, "diff", "--exit-code", "--", "backend/app/webui/static/admin-vue")
     }
     elseif ($env:GITHUB_ACTIONS -eq "true") {
         throw "Git metadata is required in CI to verify the committed frontend artifact."

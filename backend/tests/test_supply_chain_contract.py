@@ -68,6 +68,7 @@ def test_supply_chain_workflow_generates_evidence_blocks_vulnerabilities_and_sig
 
     assert "name: image-sbom-vulnerability-gate" in workflow
     assert "./scripts/update-python-locks.ps1 -Check" in workflow
+    assert "run: mkdir -p artifacts" in workflow
     assert "format: spdx-json" in workflow
     assert "severity: CRITICAL,HIGH" in workflow
     assert 'exit-code: "1"' in workflow
