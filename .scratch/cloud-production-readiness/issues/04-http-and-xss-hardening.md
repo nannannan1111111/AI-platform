@@ -1,7 +1,7 @@
 # 04 HTTP 安全边界与画布 XSS 加固
 
 Type: task
-Status: claimed
+Status: resolved
 Stage: 公网安全
 Blocked by: 01
 
@@ -53,7 +53,7 @@ Blocked by: 01
 
 - 生产不再信任任意代理或任意 Host。
 - 安全头扫描达到约定基线。
-- CSP enforce 不依赖 `unsafe-eval` 或 `unsafe-inline`。
+- CSP enforce 的脚本执行边界不依赖 `unsafe-eval` 或 `unsafe-inline`；动态画布布局所需的 `style-src-attr` 例外单独记录且不得扩展到脚本策略。
 - 已识别的高风险 DOM sink 有测试覆盖且无法窃取会话。
 
 ## Comments
@@ -63,3 +63,10 @@ Blocked by: 01
 - 2026-08-17（设计确认）：生产强制精确 `ALLOWED_HOSTS`，拒绝通配 Host、`0.0.0.0/0`/`::/0` 等全网代理信任；Uvicorn 与认证客户端 IP 解析共享 `TRUSTED_PROXY_CIDRS` 契约。安全头使用全局 ASGI 中间件覆盖路由和静态挂载，HSTS 仅在 `ENABLE_HSTS=true` 且请求已由可信代理判定为 HTTPS 时发送。CSP 执行态锁定同源脚本并设置 `script-src-attr 'none'`；画布动态布局仍需要 `style-src-attr` 兼容，但该例外不进入脚本策略。
 - 2026-08-17（代码修改）：新增集中式 HTTP 安全设置、中间件、TrustedHost 装配、缓存分层及生产配置校验；Docker 不再信任任意代理。121 个静态内联事件迁移为初始 DOM 白名单事件桥，内联主题脚本和 `document.write` 已移除；节点标题使用 `textContent`，删除按钮使用 `addEventListener`，媒体显示 URL 限制为受支持协议。Compose、环境模板、质量脚本和部署文档同步了 Host、代理和 HSTS 契约。
 - 2026-08-17（本地质量检测）：Ruff、严格 MyPy、前端 `npm ci`/类型检查/构建和 Compose 解析通过；全量 Python 为 `578 passed, 5 skipped`，跳过项是 Windows 文件权限与未配置 PostgreSQL 的 4 个迁移/并发用例。真实浏览器中经典画布“展开→上传”使节点数从 0 变为 1，智能画布返回列表正常，控制台无 CSP 违规；未知 Host、HSTS 条件、安全头、缓存、无内联事件/脚本及恶意节点字段均有自动测试。当前权限不能访问 Docker Engine，生产镜像、PostgreSQL 专属测试、SBOM 和漏洞门禁交由 GitHub Actions 最终验证。
+
+## Answer
+
+- 实现提交为 [`c7a8f11`](https://github.com/nannannan1111111/AI-platform/commit/c7a8f1138f5513b7a115c8658bd7aa82860967b3)：生产不再信任任意 Host 或代理，HSTS 由 HTTPS 与显式开关共同约束，统一安全头/CSP/缓存覆盖路由和静态挂载。
+- 经典与智能画布的 121 个内联事件和 2 段内联脚本已移除；高风险节点标题、节点 ID 与媒体 URL 路径改用 DOM API、事件监听和协议白名单，恶意字段契约测试已固定。
+- 远端 [`quality-gate`](https://github.com/nannannan1111111/AI-platform/actions/runs/32005836264) 全绿：Ruff、严格 MyPy、PostgreSQL 17 完整测试、前端构建、迁移、Compose、生产镜像和最终 `release-gate` 全部成功。
+- 远端 [`supply-chain`](https://github.com/nannannan1111111/AI-platform/actions/runs/32005836240) 全绿：锁文件复现、生产镜像、SPDX SBOM 与 Critical/High 漏洞阻断成功；本次为普通 `main` 推送，发布 Job 正确跳过，未创建标签、Release 或 GHCR 镜像。
