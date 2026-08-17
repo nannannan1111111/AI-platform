@@ -1,7 +1,7 @@
 # 01 自动化质量与发布门禁
 
 Type: task
-Status: claimed
+Status: resolved
 Stage: 发布可信
 
 ## 目标
@@ -113,3 +113,10 @@ Stage: 发布可信
 - 远端质量运行 [31991272257](https://github.com/nannannan1111111/AI-platform/actions/runs/31991272257) 全绿：`backend-quality`、PostgreSQL 17 完整 `backend-tests`、`frontend-quality`、`production-contract` 和最终 `release-gate` 全部成功。
 - 仓库为私有仓库且当前 GitHub 套餐不支持分支保护或 Repository Rulesets；两个 API 均返回 `403 Upgrade to GitHub Pro or make this repository public`。当前唯一直接协作者为仓库所有者，未擅自把仓库改为公开。
 - 因无法在平台侧强制 `release-gate`，工单继续保持 `claimed`。升级 GitHub Pro 或明确授权公开仓库后，才能完成强制 PR、禁止管理员绕过和必需检查配置。
+
+## Answer
+
+- 用户于 2026-08-17 明确决定在部署完成前暂时公开仓库；仓库已变更为 `PUBLIC`，从而解除免费套餐对私有仓库分支保护的限制。部署完成后仍需按用户计划恢复为 `PRIVATE`，并重新核验保护规则在届时套餐下是否继续可用。
+- `main` 已启用管理员同样受约束的分支保护：必须通过严格、最新的 `release-gate` 与 `supply-chain-gate`，必须经 Pull Request，要求线性历史和解决全部讨论，禁止强推与删除。仓库当前只有所有者，因此批准数设为 `0`，避免要求同一用户无法提供的自我审批；检查和 PR 流程仍不可直接绕过。
+- [`quality-gate` 32005836264](https://github.com/nannannan1111111/AI-platform/actions/runs/32005836264) 已在生产代码提交上全绿，PostgreSQL 17 完整测试、Linux 文件权限、Ruff、严格 MyPy、前端产物漂移、迁移、Compose、生产镜像和最终 `release-gate` 全部成功。
+- [`supply-chain` 32005836240](https://github.com/nannannan1111111/AI-platform/actions/runs/32005836240) 已验证生产目标构建、SPDX SBOM 和 Critical/High 漏洞阻断；普通分支推送的发布 Job 正确跳过，没有生成可部署标签或镜像。
