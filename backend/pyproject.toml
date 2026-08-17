@@ -7,22 +7,22 @@ name = "creative-studio-saas-backend"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "alembic>=1.16,<2",
-    "fastapi>=0.141,<1",
-    "httpx>=0.28,<1",
-    "psycopg[binary]>=3.2,<4",
-    "pwdlib[argon2]>=0.3,<1",
-    "pydantic[email]>=2.13,<3",
-    "python-multipart>=0.0.20,<1",
-    "sqlalchemy>=2.0,<3",
-    "uvicorn>=0.35,<1",
+    "alembic>=1.19.1,<2",
+    "fastapi>=0.141.1,<1",
+    "httpx>=0.28.1,<1",
+    "psycopg[binary]>=3.3.4,<4",
+    "pwdlib[argon2]>=0.3.1,<1",
+    "pydantic[email]>=2.13.4,<3",
+    "python-multipart>=0.0.32,<1",
+    "sqlalchemy>=2.0.52,<3",
+    "uvicorn>=0.52.3,<1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "mypy>=1.17,<2",
-    "pytest>=8.3,<9",
-    "ruff>=0.12,<1",
+    "mypy>=2.3.0,<3",
+    "pytest>=9.1.1,<10",
+    "ruff>=0.16.3,<1",
 ]
 
 [tool.pytest.ini_options]
