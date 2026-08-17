@@ -19,9 +19,13 @@ from app.http import create_app
 class _RecordingVerificationDelivery:
     def __init__(self) -> None:
         self.messages: list[tuple[str, str]] = []
+        self.password_resets: list[tuple[str, str]] = []
 
     def send_verification(self, email: str, token: str) -> None:
         self.messages.append((email, token))
+
+    def send_password_reset(self, email: str, token: str) -> None:
+        self.password_resets.append((email, token))
 
 
 class _FailingVerificationDelivery:
@@ -43,6 +47,8 @@ def _policies(*, login_ip: int = 10, login_email: int = 5) -> AuthAbusePolicies:
         login_email=RateLimitPolicy(login_email, timedelta(minutes=10)),
         register_ip=RateLimitPolicy(5, timedelta(hours=1)),
         email_verification_account=RateLimitPolicy(3, timedelta(hours=1)),
+        password_reset_ip=RateLimitPolicy(5, timedelta(hours=1)),
+        password_reset_email=RateLimitPolicy(3, timedelta(hours=1)),
     )
 
 
@@ -200,6 +206,31 @@ def test_email_verification_resend_is_limited_per_account() -> None:
     assert denied.status_code == 429
     assert denied.headers["Retry-After"] == "3600"
     assert len(delivery.messages) == 4
+
+
+def test_password_reset_requests_are_limited_by_private_email_subject() -> None:
+    delivery = _RecordingVerificationDelivery()
+    accounts = InMemoryAccountAccess(verification_delivery=delivery)
+    accounts.register("artist@example.com", "a-correct-horse-battery-staple")
+    client = TestClient(
+        create_app(
+            accounts,
+            auth_abuse_protection=InMemoryAuthAbuseProtection(
+                clock=lambda: datetime(2026, 8, 17, 12, 0, tzinfo=UTC)
+            ),
+            auth_abuse_policies=_policies(),
+        )
+    )
+
+    assert [
+        client.post("/api/v1/auth/password-reset", json={"email": "artist@example.com"}).status_code
+        for _ in range(3)
+    ] == [202] * 3
+    denied = client.post("/api/v1/auth/password-reset", json={"email": "artist@example.com"})
+
+    assert denied.status_code == 429
+    assert denied.headers["Retry-After"] == "3600"
+    assert len(delivery.password_resets) == 3
 
 
 def test_authentication_fails_closed_when_shared_limiter_is_unavailable() -> None:

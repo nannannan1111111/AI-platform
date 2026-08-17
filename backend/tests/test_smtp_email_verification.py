@@ -51,3 +51,25 @@ def test_smtp_delivery_sends_a_public_single_use_verification_link(monkeypatch) 
     plain_body = message.get_body(preferencelist=("plain",))
     assert plain_body is not None
     assert "https://studio.example.com/verify-email#token=token%20with%20%2F%20unsafe%3F" in plain_body.get_content()
+
+
+def test_smtp_delivery_sends_password_reset_token_only_in_the_fragment(monkeypatch) -> None:
+    _RecordingSmtp.messages = []
+    monkeypatch.setattr("app.accounts.smtp.smtplib.SMTP", _RecordingSmtp)
+    delivery = SmtpEmailVerificationDelivery(
+        host="smtp.example.com",
+        port=587,
+        sender="noreply@example.com",
+        public_base_url="https://studio.example.com",
+        username="mailer",
+        password="secret",
+        timeout_seconds=4.0,
+    )
+
+    delivery.send_password_reset("artist@example.com", "reset token / unsafe?")
+
+    message = _RecordingSmtp.messages[0]
+    assert message["Subject"] == "重置您的乐云工坊密码"
+    plain_body = message.get_body(preferencelist=("plain",))
+    assert plain_body is not None
+    assert "https://studio.example.com/reset-password#token=reset%20token%20%2F%20unsafe%3F" in plain_body.get_content()

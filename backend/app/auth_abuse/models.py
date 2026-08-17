@@ -13,6 +13,7 @@ class AuthAction(StrEnum):
     LOGIN = "login"
     REGISTER = "register"
     EMAIL_VERIFICATION = "email_verification"
+    PASSWORD_RESET = "password_reset"
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +39,8 @@ class AuthAbusePolicies:
     login_email: RateLimitPolicy
     register_ip: RateLimitPolicy
     email_verification_account: RateLimitPolicy
+    password_reset_ip: RateLimitPolicy
+    password_reset_email: RateLimitPolicy
 
     @classmethod
     def defaults(cls) -> AuthAbusePolicies:
@@ -47,6 +50,8 @@ class AuthAbusePolicies:
             login_email=RateLimitPolicy(5, timedelta(minutes=10)),
             register_ip=RateLimitPolicy(5, timedelta(hours=1)),
             email_verification_account=RateLimitPolicy(3, timedelta(hours=1)),
+            password_reset_ip=RateLimitPolicy(5, timedelta(hours=1)),
+            password_reset_email=RateLimitPolicy(3, timedelta(hours=1)),
         )
 
 

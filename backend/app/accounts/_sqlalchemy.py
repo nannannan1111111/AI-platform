@@ -23,7 +23,9 @@ from app.accounts.models import (
     EmailVerificationUnavailable,
     InvalidCredentials,
     InvalidEmailVerification,
+    InvalidPasswordReset,
     InvalidSession,
+    PasswordResetUnavailable,
     RegisteredUser,
     Registration,
 )
@@ -87,6 +89,18 @@ class _EmailVerificationRow(_Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class _PasswordResetRow(_Base):
+    """只保存密码重置令牌摘要及其短期有效期。"""
+
+    __tablename__ = "password_reset_tokens"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class SqlAlchemyAccountAccess:
     """使用 SQL 事务持久化账户公开行为。"""
 
@@ -98,6 +112,7 @@ class SqlAlchemyAccountAccess:
         session_ttl: timedelta = timedelta(days=30),
         verification_delivery: EmailVerificationDelivery | None = None,
         verification_ttl: timedelta = timedelta(hours=24),
+        password_reset_ttl: timedelta = timedelta(minutes=30),
     ) -> None:
         """保存数据库会话工厂和密码哈希 Adapter。"""
         self._session_factory = session_factory
@@ -107,6 +122,7 @@ class SqlAlchemyAccountAccess:
         self._session_ttl = session_ttl
         self._verification_delivery = verification_delivery
         self._verification_ttl = verification_ttl
+        self._password_reset_ttl = password_reset_ttl
 
     @classmethod
     def for_database_url(
@@ -118,6 +134,7 @@ class SqlAlchemyAccountAccess:
         session_ttl: timedelta = timedelta(days=30),
         verification_delivery: EmailVerificationDelivery | None = None,
         verification_ttl: timedelta = timedelta(hours=24),
+        password_reset_ttl: timedelta = timedelta(minutes=30),
     ) -> SqlAlchemyAccountAccess:
         """为数据库 URL 创建 Adapter；测试可显式初始化空 schema。"""
         engine = create_engine(database_url)
@@ -129,6 +146,7 @@ class SqlAlchemyAccountAccess:
             session_ttl=session_ttl,
             verification_delivery=verification_delivery,
             verification_ttl=verification_ttl,
+            password_reset_ttl=password_reset_ttl,
         )
 
     def register(self, email: str, password: str) -> Registration:
@@ -290,6 +308,50 @@ class SqlAlchemyAccountAccess:
                 raise InvalidCredentials
             user.password_hash = self._password_hash.hash(validated_password)
             database.execute(delete(_AuthSessionRow).where(_AuthSessionRow.user_id == user.id))
+
+    def request_password_reset(self, email: str) -> None:
+        """若邮箱存在则原子替换旧令牌并投递新密码重置链接。"""
+        if not _delivery_is_available(self._verification_delivery):
+            raise PasswordResetUnavailable
+        normalized_email = email.strip().casefold()
+        token = secrets.token_urlsafe(32)
+        with self._session_factory.begin() as database:
+            user = database.scalar(select(_UserRow).where(_UserRow.email == normalized_email))
+            if user is None:
+                return
+            database.execute(delete(_PasswordResetRow).where(_PasswordResetRow.user_id == user.id))
+            database.add(
+                _PasswordResetRow(
+                    token_hash=_token_hash(token),
+                    user_id=user.id,
+                    expires_at=self._clock() + self._password_reset_ttl,
+                )
+            )
+            delivery = self._verification_delivery
+            if delivery is None:
+                raise PasswordResetUnavailable
+            delivery.send_password_reset(user.email, token)
+
+    def reset_password(self, token: str, new_password: str) -> None:
+        """消费有效令牌、更新密码并在同一事务撤销全部会话。"""
+        validated_password = registration_password(new_password)
+        with self._session_factory.begin() as database:
+            user_id = database.scalar(
+                delete(_PasswordResetRow)
+                .where(
+                    _PasswordResetRow.token_hash == _token_hash(token),
+                    _PasswordResetRow.expires_at > self._clock(),
+                )
+                .returning(_PasswordResetRow.user_id)
+            )
+            if user_id is None:
+                raise InvalidPasswordReset
+            user = database.get(_UserRow, user_id)
+            if user is None:
+                raise InvalidPasswordReset
+            user.password_hash = self._password_hash.hash(validated_password)
+            database.execute(delete(_PasswordResetRow).where(_PasswordResetRow.user_id == user_id))
+            database.execute(delete(_AuthSessionRow).where(_AuthSessionRow.user_id == user_id))
 
     def credit_balance(self, access_token: str) -> CreditBalance:
         """查询当前用户个人账户空间的整数额度并格式化为四位小数。"""

@@ -7,9 +7,13 @@ from app.http import create_app
 class _RecordingEmailVerificationDelivery:
     def __init__(self) -> None:
         self.messages: list[tuple[str, str]] = []
+        self.password_resets: list[tuple[str, str]] = []
 
     def send_verification(self, email: str, token: str) -> None:
         self.messages.append((email, token))
+
+    def send_password_reset(self, email: str, token: str) -> None:
+        self.password_resets.append((email, token))
 
 
 def test_register_login_current_user_and_balance_flow() -> None:
@@ -145,6 +149,48 @@ def test_authenticated_user_changes_password_and_is_required_to_log_in_again() -
     ).status_code == 200
 
 
+def test_password_reset_is_private_single_use_and_revokes_every_session() -> None:
+    delivery = _RecordingEmailVerificationDelivery()
+    accounts = InMemoryAccountAccess(verification_delivery=delivery)
+    client = TestClient(create_app(accounts))
+    password = "a-correct-horse-battery-staple"
+    new_password = "a-new-correct-horse-battery-staple"
+    client.post("/api/v1/auth/register", json={"email": "artist@example.com", "password": password})
+    first_session = client.post(
+        "/api/v1/auth/login", json={"email": "artist@example.com", "password": password}
+    ).json()["access_token"]
+    second_session = client.post(
+        "/api/v1/auth/login", json={"email": "artist@example.com", "password": password}
+    ).json()["access_token"]
+
+    existing = client.post("/api/v1/auth/password-reset", json={"email": "artist@example.com"})
+    missing = client.post("/api/v1/auth/password-reset", json={"email": "missing@example.com"})
+    reset_token = delivery.password_resets[0][1]
+
+    assert existing.status_code == missing.status_code == 202
+    assert existing.json() == missing.json()
+    assert "token" not in existing.text
+    reset = client.post(
+        "/api/v1/auth/reset-password",
+        json={"token": reset_token, "new_password": new_password},
+    )
+    assert reset.status_code == 204
+    for access_token in (first_session, second_session):
+        assert client.get(
+            "/api/v1/auth/me", headers={"Authorization": f"Bearer {access_token}"}
+        ).status_code == 401
+    assert client.post(
+        "/api/v1/auth/login", json={"email": "artist@example.com", "password": password}
+    ).status_code == 401
+    assert client.post(
+        "/api/v1/auth/login", json={"email": "artist@example.com", "password": new_password}
+    ).status_code == 200
+    assert client.post(
+        "/api/v1/auth/reset-password",
+        json={"token": reset_token, "new_password": "another-secure-password-value"},
+    ).status_code == 400
+
+
 def test_web_ui_exposes_email_verification_and_password_change_paths() -> None:
     client = TestClient(create_app(InMemoryAccountAccess()))
 
@@ -152,9 +198,13 @@ def test_web_ui_exposes_email_verification_and_password_change_paths() -> None:
     script = client.get("/web-assets/app.js")
 
     assert verification_page.status_code == 200
+    assert client.get("/forgot-password").status_code == 200
+    assert client.get("/reset-password").status_code == 200
     assert "window.location.hash.slice(1)" in script.text
     assert "/api/v1/auth/email-verification" in script.text
     assert "/api/v1/auth/change-password" in script.text
+    assert "/api/v1/auth/password-reset" in script.text
+    assert "/api/v1/auth/reset-password" in script.text
     assert "/admin/email-settings" in script.text
     assert "/api/v1/admin/email-settings" in script.text
     assert "乐云工坊" in verification_page.text

@@ -97,6 +97,9 @@ def test_production_environment_example_matches_the_supported_defaults() -> None
     assert "AUTH_LOGIN_EMAIL_LIMIT=5" in environment_example
     assert "AUTH_REGISTER_IP_LIMIT=5" in environment_example
     assert "AUTH_EMAIL_VERIFICATION_ACCOUNT_LIMIT=3" in environment_example
+    assert "AUTH_PASSWORD_RESET_IP_LIMIT=5" in environment_example
+    assert "AUTH_PASSWORD_RESET_EMAIL_LIMIT=3" in environment_example
+    assert "AUTH_PASSWORD_RESET_WINDOW_SECONDS=3600" in environment_example
     assert "TRUSTED_PROXY_CIDRS=" in environment_example
     assert "ALLOWED_HOSTS=studio.example.com" in environment_example
     assert "ENABLE_HSTS=false" in environment_example

@@ -175,6 +175,14 @@ class ProductionSettings:
                 _positive_int(values, "AUTH_EMAIL_VERIFICATION_ACCOUNT_LIMIT", 3),
                 timedelta(seconds=_positive_int(values, "AUTH_EMAIL_VERIFICATION_WINDOW_SECONDS", 3600)),
             ),
+            password_reset_ip=RateLimitPolicy(
+                _positive_int(values, "AUTH_PASSWORD_RESET_IP_LIMIT", 5),
+                timedelta(seconds=_positive_int(values, "AUTH_PASSWORD_RESET_WINDOW_SECONDS", 3600)),
+            ),
+            password_reset_email=RateLimitPolicy(
+                _positive_int(values, "AUTH_PASSWORD_RESET_EMAIL_LIMIT", 3),
+                timedelta(seconds=_positive_int(values, "AUTH_PASSWORD_RESET_WINDOW_SECONDS", 3600)),
+            ),
         )
 
         return cls(

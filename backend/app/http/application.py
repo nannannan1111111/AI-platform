@@ -19,7 +19,7 @@ from tempfile import TemporaryFile
 from typing import Annotated
 from urllib.parse import parse_qsl, unquote
 
-from fastapi import FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import BackgroundTasks, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -34,7 +34,9 @@ from app.accounts import (
     InvalidCredentials,
     InvalidEmail,
     InvalidEmailVerification,
+    InvalidPasswordReset,
     InvalidSession,
+    PasswordResetUnavailable,
     RegisteredUser,
     WeakPassword,
 )
@@ -222,6 +224,7 @@ _WORKFLOW_MAX_COMPRESSION_RATIO = 200
 _WORKFLOW_COMPRESSION_RATIO_MIN_BYTES = 1024 * 1024
 _LOG = logging.getLogger(__name__)
 _REGISTRATION_ACCEPTED = {"detail": "注册请求已受理；若邮箱可用，验证邮件将发送到该地址"}
+_PASSWORD_RESET_ACCEPTED = {"detail": "密码重置请求已受理；若邮箱可用，重置邮件将发送到该地址"}
 _WORKFLOW_MEDIA_URL_KEYS = {
     "url",
     "path",
@@ -252,6 +255,21 @@ class _PasswordChange(BaseModel):
     """已登录用户修改密码请求。"""
 
     current_password: str
+    new_password: str
+
+
+class _PasswordResetRequest(BaseModel):
+    """不泄露账户是否存在的密码重置邮件请求。"""
+
+    model_config = ConfigDict(extra="forbid")
+    email: str = Field(min_length=3, max_length=320)
+
+
+class _PasswordReset(BaseModel):
+    """一次性令牌与新密码。"""
+
+    model_config = ConfigDict(extra="forbid")
+    token: str = Field(min_length=20, max_length=512)
     new_password: str
 
 
@@ -1105,6 +1123,48 @@ def create_app(
         except WeakPassword as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="新密码至少需要 12 个字符"
+            ) from exc
+
+    @app.post("/api/v1/auth/password-reset", status_code=status.HTTP_202_ACCEPTED)
+    def request_password_reset(
+        reset: _PasswordResetRequest,
+        request: Request,
+        background_tasks: BackgroundTasks,
+    ) -> dict[str, str]:
+        normalized_email = reset.email.strip().casefold()
+        _enforce_auth_limit(
+            auth_abuse_protection,
+            AuthAction.PASSWORD_RESET,
+            (
+                RateLimitSubject("email", normalized_email, abuse_policies.password_reset_email),
+                RateLimitSubject("ip", resolve_client_ip(request), abuse_policies.password_reset_ip),
+            ),
+        )
+        def deliver_without_account_disclosure() -> None:
+            try:
+                accounts.request_password_reset(reset.email)
+            except (PasswordResetUnavailable, EmailDeliveryFailed):
+                _LOG.error(
+                    "password reset delivery failed",
+                    extra={"security_event": "password_reset_delivery_failed"},
+                )
+
+        background_tasks.add_task(deliver_without_account_disclosure)
+        return dict(_PASSWORD_RESET_ACCEPTED)
+
+    @app.post("/api/v1/auth/reset-password", status_code=status.HTTP_204_NO_CONTENT)
+    def reset_password(reset: _PasswordReset) -> None:
+        try:
+            accounts.reset_password(reset.token, reset.new_password)
+        except InvalidPasswordReset as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="密码重置链接无效或已过期",
+            ) from exc
+        except WeakPassword as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="新密码至少需要 12 个字符",
             ) from exc
 
     @app.get("/api/v1/credits/balance")
