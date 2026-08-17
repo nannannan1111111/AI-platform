@@ -49,6 +49,7 @@ from app.model_routing import (
     SqlAlchemyModelRouting,
     configured_file_system_provider_secrets,
 )
+from app.observability import install_structured_logging
 from app.orders import SqlAlchemyRechargeOrders
 from app.payments import SqlAlchemyEpayPayments
 from app.platform_content import SqlAlchemyPlatformContentSettings
@@ -86,6 +87,7 @@ class ProductionSettings:
     trusted_proxy_cidrs: tuple[str, ...]
     allowed_hosts: tuple[str, ...]
     enable_hsts: bool
+    metrics_token: str | None
 
     @classmethod
     def from_environ(cls, environ: Mapping[str, str] | None = None) -> ProductionSettings:
@@ -158,6 +160,9 @@ class ProductionSettings:
             allowed_hosts = validate_allowed_hosts(values.get("ALLOWED_HOSTS", "").split(","))
         except ValueError as exc:
             raise ProductionConfigurationError("ALLOWED_HOSTS must contain exact public host names") from exc
+        metrics_token = values.get("METRICS_TOKEN", "").strip() or None
+        if metrics_token is not None and len(metrics_token) < 16:
+            raise ProductionConfigurationError("METRICS_TOKEN must contain at least 16 characters")
         auth_abuse_policies = AuthAbusePolicies(
             login_ip=RateLimitPolicy(
                 _positive_int(values, "AUTH_LOGIN_IP_LIMIT", 10),
@@ -201,6 +206,7 @@ class ProductionSettings:
             trusted_proxy_cidrs=trusted_proxy_cidrs,
             allowed_hosts=allowed_hosts,
             enable_hsts=_boolean(values, "ENABLE_HSTS", False),
+            metrics_token=metrics_token,
         )
 
 
@@ -262,6 +268,7 @@ def account_admin_authorizer(
 def create_production_app(environ: Mapping[str, str] | None = None) -> FastAPI:
     """Compose persistent SaaS adapters from explicit production settings."""
     settings = ProductionSettings.from_environ(environ)
+    install_structured_logging(getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO))
     media_objects = configured_file_system_media_objects(environ)
     provider_secrets = configured_file_system_provider_secrets(environ)
     engine = configure_postgresql_engine(
@@ -491,6 +498,7 @@ def _compose_application(
             allowed_hosts=settings.allowed_hosts,
             enable_hsts=settings.enable_hsts,
         ),
+        metrics_token=settings.metrics_token,
     )
     app.state.generation_tasks = generation_tasks
     app.state.generation_attempt_submissions = generation_attempt_submissions

@@ -1,7 +1,7 @@
 # 08 可观测性与告警
 
 Type: task
-Status: open
+Status: claimed
 Stage: 可运维
 Blocked by: 05
 
@@ -55,3 +55,12 @@ Blocked by: 05
 
 ## Comments
 
+### 2026-08-18 仓库侧先行实现
+
+- 新增请求关联中间件：安全接受/生成 `x-request-id`，响应回传并记录 HTTP 状态/延迟指标。
+- 新增轻量 Prometheus 文本出口 `/metrics`，必须配置 `METRICS_TOKEN` 才可抓取；未配置时返回 404。
+- 新增 JSON 日志 Formatter/Filter 和字段 allowlist，脱敏 Bearer、Cookie、API Key、数据库连接串、密码、提示词和图片字段。
+- Worker 接入结构化日志、心跳、最后成功时间、在途任务、队列最老任务年龄及处理结果指标。
+- Provider 图片提交和易支付通知入口分别增加低基数计数指标，不记录请求内容、凭据或用户提示词。
+- 新增定向请求 ID、指标鉴权、日志脱敏测试；Ruff 已通过。当前环境缺少项目依赖，完整 pytest/mypy 需在 CI 或安装锁定依赖后运行。
+- 真实腾讯云监控、通知渠道、Provider/数据库/磁盘故障注入和告警恢复验收仍未完成，因此工单保持 `claimed`。

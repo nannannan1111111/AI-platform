@@ -154,6 +154,12 @@ curl -fsS http://127.0.0.1:8000/readyz
 
 生成 Worker 与 Provider 后台轮询/核实仍不装配；支付已装配易支付兼容下单和成功通知，但不包含退款、部分退款或拒付自动通知；每日只读对账和双人复核流程见 `docs/payment-and-account-operations.md`。邮箱验证和密码找回均已通过 SMTP 装配；密码重置令牌只存摘要、30 分钟单次有效，成功后撤销该用户全部会话。这里的“后台轮询”不包括 `OpenAICompatibleImageSubmissions` 在一次提交请求生命周期内、拿到任务标识后执行的最多 240 秒查询；该查询不会在请求结束后继续。Web 进程每秒扫描达到管理员配置截止点的生成任务，并每分钟判断路由健康是否已满 24 小时；生成截止扫描只失败退款和拒绝迟到交付，不查询或取消上游。没有上游任务标识时不得按本地任务 ID 盲目轮询或重新 POST，以免查询错误任务或产生二次扣费。路由检测期间继续沿用最近完成状态，完整结果持久化后才更新，并且不会改动路由 `enabled` 开关。Provider 密钥当前由受控文件权限而不是 KMS 静态加密。
 
+## 可观测性与告警
+
+应用为每个 HTTP 请求接受或生成安全的 `x-request-id`，并在响应中回传。Prometheus 兼容指标位于 `/metrics`；只有设置至少 16 个字符的 `METRICS_TOKEN` 后才开放，抓取时使用 `Authorization: Bearer <token>` 或 `X-Metrics-Token`。未配置令牌时该路径返回 404，避免把未保护的指标端点暴露到公网。
+
+当前仓库侧指标包括 HTTP 请求计数/延迟、生成 Worker 心跳、最后成功领取时间、在途任务数、队列最老任务年龄和任务处理结果。Worker 使用 JSON 日志格式；字段采用 allowlist，Bearer、Cookie、API Key、数据库连接串、密码、完整提示词和图片内容会被脱敏。云端仍需把这些指标接入腾讯云监控或 Prometheus，并为以下持续窗口配置告警：5 分钟 HTTP 5xx > 2%、数据库池等待/耗尽、Worker 心跳超过 2 分钟未更新、队列最老任务超过 10 分钟、媒体盘使用率 > 80%、备份成功时间超过 26 小时。每条告警应链接相应 Runbook，并验证恢复通知。
+
 ## 备份与恢复
 
 一次可恢复的备份必须同时包含：
@@ -162,6 +168,24 @@ curl -fsS http://127.0.0.1:8000/readyz
 2. `GENERATED_MEDIA_HOST_PATH` 的同一恢复点文件备份；
 3. `PROVIDER_SECRETS_HOST_PATH` 的同一恢复点加密备份；
 4. 使用中的不可变镜像 digest 和非敏感部署配置记录。
+
+仓库提供本地恢复点 manifest 工具，可在不接触云凭据的情况下先校验文件完整性：
+
+```bash
+cd backend
+python scripts/backup_manifest.py create \
+  --output /secure-backups/recovery-point.json \
+  --database-backup-id pg-2026-08-18T0000Z \
+  --media-snapshot-id media-2026-08-18T0000Z \
+  --secrets-snapshot-id secrets-2026-08-18T0000Z \
+  --image-digest sha256:<signed-image-digest> \
+  --migration-head 0061_password_reset_tokens \
+  --config-version <git-commit> \
+  --file database=/secure-backups/database.dump
+python scripts/backup_manifest.py verify /secure-backups/recovery-point.json
+```
+
+该工具只负责 manifest、SHA-256 和本地文件校验，不会替代 TencentDB PITR、COS 快照、KMS 加密或隔离环境恢复演练；这些仍需云端凭据和真实资源后验收。
 
 数据库、媒体目录与 Provider 密钥目录必须成对恢复。只恢复数据库会留下缺失图片和不可读 Provider 引用，只恢复目录会失去账户归属与引用关系。所有备份都应加密并限制访问；不要把数据库密码、会话、支付凭据或 Provider Key 写入普通日志或仓库。
 

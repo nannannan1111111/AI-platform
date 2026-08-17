@@ -104,6 +104,7 @@ def test_production_settings_parse_explicit_deployment_values(tmp_path: Path) ->
     assert settings.trusted_proxy_cidrs == ()
     assert settings.allowed_hosts == ("studio.example.com", "127.0.0.1", "localhost")
     assert settings.enable_hsts is False
+    assert settings.metrics_token is None
 
 
 def test_production_settings_default_to_twenty_active_image_units(tmp_path: Path) -> None:
@@ -143,6 +144,33 @@ def test_production_settings_parse_capacity_controls(tmp_path: Path) -> None:
     assert settings.database_pool_timeout_seconds == 4.5
     assert settings.generation_submission_mode == "inline"
     assert settings.generation_worker_deployed_limit == 8
+
+
+def test_production_settings_parse_protected_metrics_token(tmp_path: Path) -> None:
+    settings = ProductionSettings.from_environ(
+        {
+            "DATABASE_URL": "postgresql+psycopg://example.invalid/app",
+            "GENERATED_MEDIA_ROOT": str(tmp_path),
+            "PROVIDER_SECRETS_ROOT": str(tmp_path / "provider-secrets"),
+            "PLATFORM_ADMIN_EMAILS": "admin@example.com",
+            "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
+            "ALLOWED_HOSTS": "studio.example.com",
+            "METRICS_TOKEN": "metrics-token-123456",
+        }
+    )
+    assert settings.metrics_token == "metrics-token-123456"
+    with pytest.raises(ProductionConfigurationError, match="METRICS_TOKEN"):
+        ProductionSettings.from_environ(
+            {
+                "DATABASE_URL": "postgresql+psycopg://example.invalid/app",
+                "GENERATED_MEDIA_ROOT": str(tmp_path),
+                "PROVIDER_SECRETS_ROOT": str(tmp_path / "provider-secrets"),
+                "PLATFORM_ADMIN_EMAILS": "admin@example.com",
+                "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
+                "ALLOWED_HOSTS": "studio.example.com",
+                "METRICS_TOKEN": "short",
+            }
+        )
 
 
 @pytest.mark.parametrize(

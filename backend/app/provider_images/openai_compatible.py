@@ -24,6 +24,7 @@ from app.generation_attempts._provider import (
 from app.generation_results import GenerationImageContent
 from app.model_routing._generation_targets import ProviderGenerationTargets
 from app.model_routing.models import ImageResponseMode
+from app.observability import METRICS
 
 _SIZES = {
     ("1:1", "1k"): "1024x1024",
@@ -170,6 +171,7 @@ class OpenAICompatibleImageSubmissions:
                 reason="input fidelity requires at least one edit image",
             )
         endpoint = f"{target.base_url.rstrip('/')}/images/{'edits' if has_edit_inputs else 'generations'}"
+        METRICS.inc("provider_image_requests_total", labels={"operation": expected_operation})
         images: list[GenerationImageContent] = []
         provider_accepted = False
         upstream_request_id = ""
