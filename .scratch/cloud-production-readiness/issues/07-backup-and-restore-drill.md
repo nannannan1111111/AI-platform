@@ -59,4 +59,5 @@ Blocked by: 05, 06
 
 - 新增 `backend/app/backup_manifest.py` 与 `backend/scripts/backup_manifest.py`，支持恢复点元数据、文件 SHA-256、原子写入（0600）和完整性校验。
 - 新增定向测试，覆盖完整恢复点、篡改文件拒绝和必填组件校验。
+- `verify` 支持通过 `--file NAME=PATH` 将恢复后的文件映射到隔离目录，避免直接信任原机器绝对路径。
 - 该实现不宣称已完成腾讯云 PITR、COS、KMS 或隔离恢复；真实云资源和 RPO/RTO 演练仍依赖任务 05/06 与用户后续凭据。
