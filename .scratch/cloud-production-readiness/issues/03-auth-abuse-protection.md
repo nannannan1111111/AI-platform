@@ -1,7 +1,7 @@
 # 03 认证防滥用与登录风控
 
 Type: task
-Status: claimed
+Status: resolved
 Stage: 公网安全
 Blocked by: 01
 
@@ -65,7 +65,8 @@ Blocked by: 01
 - 2026-08-17（修改代码）：新增 `app.auth_abuse` Port、内存测试 Adapter、可信代理解析器与 PostgreSQL Adapter；迁移 `0060_auth_abuse_protection` 创建固定窗口表和到期索引。注册、登录、验证邮件重发已接入策略；重复邮箱、成功注册及注册邮件投递失败统一返回 202，不再通过响应暴露账户存在性。拒绝与后端故障输出可聚合的结构化安全事件，不记录邮箱、IP、密码、Token 或请求体。
 - 2026-08-17（配置与运维）：生产启动强制要求至少 32 字节的 `AUTH_RATE_LIMIT_HASH_KEY`，Compose、`.env.example`、生产契约和运维文档已覆盖阈值、窗口、可信代理、503/429 语义、自动过期和紧急解锁 SQL。测试 HMAC Key 仅用于测试，未提交真实部署 Secret。
 - 2026-08-17（本地质量检测）：Ruff 与严格 MyPy 通过；认证/运行时/容器定向测试 41 项通过，最终认证回归 16 项通过；临时 PostgreSQL 17 上 Alembic 完整升级→降级→升级及 20 并发跨两个 Adapter 的原子性测试 4 项通过（5 允许、15 拒绝）；完整后端 574 passed、1 个 Windows 权限测试跳过；前端 `npm ci/check/build`、Compose 解析与生产镜像构建通过。最终本地镜像 manifest list 为 `sha256:829e13cff13cb27691d26a015d7904d506a1d7e5abc36a95ea5cf1bcddc09482`，仅作本地门禁证据，未发布。
+- 2026-08-17（远端质量检测）：提交 `b0b9be0e24ca7c13a29975138795493f35aa37c4` 的 [quality-gate 31995819517](https://github.com/nannannan1111111/AI-platform/actions/runs/31995819517) 全绿，最终 `release-gate` 成功；[supply-chain 31995819534](https://github.com/nannannan1111111/AI-platform/actions/runs/31995819534) 的锁文件复现、生产镜像构建、SBOM 与高危漏洞阻断全绿。普通 `main` 提交未触发镜像发布，仓库保持私有。
 
 ## Answer
 
-认证防滥用实现已满足源码侧完成标准：三个敏感流程使用 PostgreSQL 跨进程限流，登录同时约束 IP 与规范化邮箱、成功后清理邮箱失败窗口；注册按 IP、验证邮件按账户约束。限流键只以 HMAC 摘要落库，429 携带 `Retry-After`，数据库故障时 fail-closed。注册响应不再区分邮箱是否已经存在。剩余确认项只有本提交的真实 GitHub Actions 结果；远端全绿后将补充运行链接并把工单状态改为 `resolved`。
+认证防滥用实现已满足完成标准：三个敏感流程使用 PostgreSQL 跨进程限流，登录同时约束 IP 与规范化邮箱、成功后清理邮箱失败窗口；注册按 IP、验证邮件按账户约束。限流键只以 HMAC 摘要落库，429 携带 `Retry-After`，数据库故障时 fail-closed。注册响应不再区分邮箱是否已经存在。本地和真实 GitHub Actions 门禁均已通过，工单已完成。
