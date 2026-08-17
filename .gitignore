@@ -13,6 +13,14 @@ frontend/admin/.vite/
 .env.*
 !.env.example
 deploy/.env
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+deploy/tencent-cloud/infra/backend.hcl
+deploy/tencent-cloud/infra/terraform.tfvars
 
 /data/
 /media/

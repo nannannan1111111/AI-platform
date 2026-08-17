@@ -1,0 +1,41 @@
+{
+	admin 127.0.0.1:2019
+	servers {
+		trusted_proxies static private_ranges
+		client_ip_headers X-Forwarded-For X-Real-IP
+	}
+}
+
+{$SITE_DOMAIN} {
+	encode zstd gzip
+
+	request_body {
+		max_size {$MAX_REQUEST_BODY_SIZE:32MB}
+	}
+
+	reverse_proxy 127.0.0.1:{$CREATIVE_STUDIO_PORT:8000} {
+		flush_interval -1
+		health_uri /readyz
+		health_interval 15s
+		health_timeout 5s
+
+		transport http {
+			dial_timeout 5s
+			response_header_timeout {$UPSTREAM_RESPONSE_TIMEOUT:11m}
+			keepalive 30s
+		}
+	}
+
+	header {
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/infinite-canvas-access.json {
+			roll_size 10MiB
+			roll_keep 10
+			roll_keep_for 168h
+		}
+		format json
+	}
+}

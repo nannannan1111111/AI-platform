@@ -87,9 +87,12 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements.lock
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: "1.12.5"
       - name: Install production backend dependencies
         run: python -m pip install --disable-pip-version-check --require-hashes -r backend/requirements.lock
-      - name: Validate migrations, Compose, and production image
+      - name: Validate migrations, Compose, Tencent Cloud IaC, and production image
         shell: pwsh
         run: ./scripts/quality-gate.ps1 -Scope production
 

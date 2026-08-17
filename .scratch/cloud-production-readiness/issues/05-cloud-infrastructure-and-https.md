@@ -1,7 +1,7 @@
 # 05 单机云基础设施与 HTTPS 入口
 
 Type: task
-Status: open
+Status: claimed
 Stage: 云端落地
 Blocked by: 02, 03, 04
 
@@ -12,7 +12,7 @@ Blocked by: 02, 03, 04
 ## 问题分析
 
 - 当前 Compose 假设服务器、数据库、目录、域名和反向代理已由人工准备，没有云资源定义。
-- 云厂商、区域、域名和预算尚未确定，不能安全地直接创建资源。
+- 云厂商已确定为腾讯云；区域、可用区、域名/备案、预算、RTO/RPO 和账号最小权限仍未确认，不能安全地直接创建真实资源。
 - SSE 需要关闭代理缓冲并延长读取超时；普通默认代理配置可能造成假超时。
 - 数据库当前应用连接预算为 60，实例必须预留迁移、备份和人工排障连接。
 
@@ -56,3 +56,43 @@ Blocked by: 02, 03, 04
 
 ## Comments
 
+- 2026-08-17：用户明确要求在暂不创建测试标签、Release 或 GHCR 测试镜像的前提下继续部署开发。任务 02 的锁文件、固定基础镜像、SBOM、漏洞门禁和签名发布工作流已完成，真实生产摘要与 Cosign 证明仍须在首次部署发布时取得；本任务先推进腾讯云仓库侧 IaC、HTTPS 入口和部署流程，并把“仅部署已扫描、已签名的不可变摘要”保留为开放流量前的硬门禁。
+
+### 2026-08-17 腾讯云仓库侧实施结果
+
+#### 分析问题
+
+- 确认现有 Production Compose 已具备迁移先行、应用端口只绑定 `127.0.0.1`、数据库驱动就绪检查、Web/Worker 独立扩缩和 60 条最坏应用连接预算，但云网络、主机、磁盘、托管数据库、DNS、证书和镜像仓库均依赖人工准备。
+- 确认腾讯云 Provider 1.83.23 能管理 VPC/CVM/CBS/TencentDB PostgreSQL/TCR/DNSPod；其 PostgreSQL 字段说明仍只列到 16，因此不能靠静态文档假定 17 可用，必须在目标地域查询真实版本清单并禁止静默降级。
+- 确认创建 TencentDB 的 `root_password` 是 Provider 必填字段，会存在于 Terraform state；方案把加密、版本化、最小权限 COS state 作为生产 Secret 边界，不宣称敏感值可从 state 中消失。应用连接串、认证 HMAC、Provider/SMTP/支付密钥不进入 IaC、cloud-init、输出或 Git。
+- 腾讯云已选定，但真实地域/可用区、域名及备案、固定运维 CIDR、SSH Key、预算、RTO/RPO、账号权限和生产发布授权尚未提供，因此本轮不调用云 API 创建收费资源。
+
+#### 设计方案
+
+- 单 VPC/单 CVM 首发，公网安全组仅开放 80/443 和受限运维 `/32` 的 22；数据库安全组只接受应用安全组的 5432，应用 8000 不进入安全组。
+- 同地域 TencentDB PostgreSQL 固定要求主版本 17、私网、SSL、删除保护和可选跨可用区节点；OpenTofu `plan` 查询地域版本清单，没有 17 时硬失败。
+- 媒体和 Provider 密钥使用独立加密 CBS，cloud-init 以幂等 systemd 服务格式化/挂载并固定 `0750`、`0700` 边界；CBS 未挂载时发布失败闭合。
+- 私有 TCR 关闭公网访问，通过 VPC Attachment 拉取；Namespace 自动扫描并阻断 High 漏洞。正式镜像先由 GitHub OIDC 签名，再用 `cosign copy` 把镜像、签名与证明晋级到 TCR，并按目标摘要再次验签。
+- Caddy 2.11.4 由固定下载地址和 SHA-512 安装，自动 HTTPS/续期；SSE 禁用代理缓冲，响应头超时为 11 分钟，请求体默认 32 MB。Caddy 只连接回环应用，生产可信代理严格等于 `127.0.0.1/32`。
+- 发布顺序固定为验签、Compose 解析/拉取、迁移、Web/Worker、回环 `/readyz`、Caddy 配置校验/启用、公网 HTTPS `/readyz`；首次部署任一前置失败均不开放流量。
+
+#### 修改代码
+
+- 新增 `deploy/tencent-cloud/infra/`：固定 OpenTofu/Provider、远端 COS S3-compatible state 模板、VPC/子网、安全组、CVM/EIP、加密 CBS、PostgreSQL 17、SSL、私有 TCR/VPC Attachment、DNSPod 和非敏感输出。
+- 新增固定版本 cloud-init、Caddyfile、腾讯云生产环境模板、Caddy 环境模板，以及签名镜像晋级、失败闭合部署、公网边界验证和 IaC 校验脚本。
+- 新增 `docs/tencent-cloud-production.md`，记录网络图、端口矩阵、IAM/Secret/state 边界、连接预算、成本清单、Plan/Apply、首次发布、验收、回滚以及部署后恢复 GitHub Private 的复核要求。
+- CI `production-contract` 新增固定提交的 OpenTofu 1.12.5 安装和 `fmt/init/validate`；新增 7 项腾讯云部署契约并扩展质量门禁契约。
+
+#### 本地质量检测
+
+- OpenTofu 1.12.5 使用腾讯云 Provider 1.83.23 的真实 Schema 完成 `fmt -check`、`init -backend=false` 和 `validate`；Provider lock 已提交。未使用云账号执行 `plan/apply`。
+- Caddy 2.11.4 对生产 Caddyfile 校验通过；cloud-init 模板通过 YAML 解析；腾讯云生产环境模板可解析现有 Production Compose；ShellCheck 0.11.0 和 Actionlint 1.7.7 通过。
+- Ruff 通过；严格 MyPy 对 136 个源文件通过；PostgreSQL 17 完整后端回归为 `589 passed, 1 skipped`，唯一跳过仍是 Windows 无法表达 Linux mode bits 的权限契约。
+- 前端 `npm ci`、类型检查和构建通过，提交产物无漂移；Alembic 单 head、Production Compose 和生产镜像构建通过。本地候选 manifest list 为 `sha256:773021d033780ce99e3796100b0a50ad3f437e0952b274a68211c263f900a477`，仅作本地门禁证据，未发布。
+- 定向腾讯云/CI/Production 契约为 `19 passed`；临时 PostgreSQL 17 容器已清理，没有创建标签、Release、GHCR/TCR 镜像或腾讯云收费资源。
+
+#### 尚未完成的真实云验收
+
+- 仍需用户提供并批准地域/双可用区、域名与备案状态、固定运维公网 CIDR、腾讯云 SSH Key 名、月预算、RTO/RPO 和 Terraform Runner 凭据，才能生成真实 Plan。
+- 仍需在隔离预发布账号完成创建/部署/销毁演练，并验证 PostgreSQL 17 地域库存、连接上限、私网/TLS、TCR VPC 拉取、证书续期、端口扫描、SSE、上传/下载、413/超时和迁移失败不开放流量。
+- 仍需首次正式发布授权，取得已扫描、带 SBOM/Provenance、可验证 Cosign 签名的真实摘要并晋级私有 TCR。完成这些外部验收前，工单保持 `claimed`，不得标记 `resolved`。

@@ -1,0 +1,21 @@
+# Bootstrap this COS bucket separately. Enable server-side encryption, versioning,
+# access logging, lifecycle retention, and an IAM policy limited to this prefix.
+bucket = "replace-with-private-cos-state-bucket"
+key    = "infinite-canvas/production/terraform.tfstate"
+region = "ap-guangzhou"
+
+# Tencent COS S3-compatible endpoint for the selected region.
+endpoints = {
+  s3 = "https://cos.ap-guangzhou.myqcloud.com"
+}
+
+use_path_style              = true
+skip_credentials_validation = true
+skip_region_validation      = true
+skip_requesting_account_id  = true
+skip_metadata_api_check     = true
+encrypt                     = true
+use_lockfile                = true
+
+# Supply backend credentials only through the deployment runner environment.
+# Do not add access_key or secret_key to this file.

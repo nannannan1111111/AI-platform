@@ -1,0 +1,32 @@
+project_name = "infinite-canvas"
+environment  = "production"
+
+# Confirm region, zone, ICP/domain constraints, latency, and data residency first.
+region                    = "ap-guangzhou"
+availability_zone         = "ap-guangzhou-6"
+standby_availability_zone = "ap-guangzhou-7"
+
+domain    = "example.com"
+subdomain = "studio"
+
+# Restrict this to the operator's current public IPv4 address, normally /32.
+operator_cidr = "203.0.113.10/32"
+ssh_key_name  = "replace-with-existing-tencent-cloud-key-pair"
+
+# Select a currently available type with at least 2 vCPU and 4 GiB memory.
+instance_type = "SA5.MEDIUM4"
+
+postgresql_cpu         = 2
+postgresql_memory_gib  = 4
+postgresql_storage_gib = 100
+
+media_disk_size_gib = 100
+eip_bandwidth_mbps  = 10
+
+tags = {
+  owner       = "replace-with-owner"
+  cost-center = "replace-with-cost-center"
+}
+
+# Never put postgresql_root_password in this file. Export a secret environment variable:
+# TF_VAR_postgresql_root_password='<password-manager-value>'

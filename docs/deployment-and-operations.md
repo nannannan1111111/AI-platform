@@ -1,5 +1,7 @@
 # SaaS 单服务器 Docker 部署与运维
 
+腾讯云首发环境的网络、OpenTofu、私有 TCR、Caddy HTTPS、成本与验收步骤见 `docs/tencent-cloud-production.md`。通用 Compose 契约仍以本文为准；腾讯云部署必须额外通过该文档中的签名摘要和云边界检查。
+
 仓库根目录的 `Dockerfile` 和 `deploy/compose.production.yml` 启动 Python/FastAPI SaaS 后端，不再启动旧的 `creative_studio.bootstrap.runtime:app`。镜像包含 `backend/app`、Alembic 迁移和 SaaS Web UI。第一版本不发布画布导航、画布工作区、经典/智能编辑器入口或画布 HTTP API；根目录旧静态资源仅作后续迁移与历史兼容保留。
 
 当前单机部署形态是一个运行多个 Uvicorn 进程的 Web 容器、可独立扩缩的生成 Worker、一次性迁移容器、PostgreSQL、服务器本地媒体目录和受控 Provider 密钥目录。Web 完成鉴权、校验、持久化排队、SSE 状态推送以及易支付兼容网关的下单/通知验签；耗时的 Provider 图片请求由生成 Worker 执行。周期任务和任务领取使用 PostgreSQL advisory lock 做跨进程互斥。当前仍不包含支付退款/拒付自动化、跨主机对象存储或 KMS Adapter；账户验证邮件通过部署方提供的 SMTP 服务真实投递。

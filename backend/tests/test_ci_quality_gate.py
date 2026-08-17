@@ -59,6 +59,10 @@ def test_production_gate_requires_one_migration_head_compose_and_image_build() -
     assert "Expected exactly one Alembic head" in script
     assert "docker compose -f deploy/compose.production.yml config --quiet" in script
     assert "docker build --tag creative-studio:quality-gate ." in script
+    assert '"-chdir=deploy/tencent-cloud/infra", "validate"' in script
+    assert "OpenTofu is required in CI" in script
+    assert "opentofu/setup-opentofu@" in workflow
+    assert 'tofu_version: "1.12.5"' in workflow
     assert "Scope production" in workflow
 
 

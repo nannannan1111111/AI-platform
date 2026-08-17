@@ -143,6 +143,19 @@ function Invoke-ProductionContract {
         }
 
         Invoke-Checked docker build --tag creative-studio:quality-gate .
+
+        $OpenTofu = Get-Command tofu -ErrorAction SilentlyContinue
+        if ($null -ne $OpenTofu) {
+            Invoke-Checked -Command $OpenTofu.Source -Arguments @("-chdir=deploy/tencent-cloud/infra", "fmt", "-check", "-recursive")
+            Invoke-Checked -Command $OpenTofu.Source -Arguments @("-chdir=deploy/tencent-cloud/infra", "init", "-backend=false", "-input=false")
+            Invoke-Checked -Command $OpenTofu.Source -Arguments @("-chdir=deploy/tencent-cloud/infra", "validate")
+        }
+        elseif ($env:GITHUB_ACTIONS -eq "true") {
+            throw "OpenTofu is required in CI to validate Tencent Cloud infrastructure."
+        }
+        else {
+            Write-Warning "OpenTofu is not on PATH; Tencent Cloud IaC validation was skipped locally."
+        }
     }
     finally {
         Pop-Location
