@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 
 class EmailDeliveryFailed(RuntimeError):
-    """验证邮件没有被 SMTP 服务接受。"""
+    """账户邮件没有被 SMTP 服务接受。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +45,33 @@ class SmtpEmailVerificationDelivery:
             subtype="html",
         )
 
+        self._send(email, message)
+
+    def send_password_reset(self, email: str, token: str) -> None:
+        """发送只含 URL fragment、短期有效且不可重放的密码重置链接。"""
+        reset_url = f"{self.public_base_url.rstrip('/')}/reset-password#token={quote(token, safe='')}"
+        message = EmailMessage()
+        message["Subject"] = "重置您的乐云工坊密码"
+        message["From"] = self.sender
+        message["To"] = email
+        message.set_content(
+            "我们收到了您的乐云工坊密码重置请求。\n\n"
+            f"请在 30 分钟内打开以下链接设置新密码：\n{reset_url}\n\n"
+            "链接只能使用一次。成功重置后，所有设备上的登录会话都会失效。\n"
+            "如果这不是您的操作，请忽略这封邮件。"
+        )
+        message.add_alternative(
+            "<p>我们收到了您的乐云工坊密码重置请求。</p>"
+            f'<p><a href="{reset_url}">设置新密码</a></p>'
+            "<p>此链接将在 30 分钟后失效且只能使用一次。成功重置后，所有设备上的登录会话都会失效。</p>"
+            "<p>如果这不是您的操作，请忽略这封邮件。</p>",
+            subtype="html",
+        )
+
+        self._send(email, message)
+
+    def _send(self, email: str, message: EmailMessage) -> None:
+        """通过所选 SMTP 安全模式发送一封已构造的账户邮件。"""
         try:
             if self.security == "ssl":
                 with smtplib.SMTP_SSL(
@@ -62,7 +89,7 @@ class SmtpEmailVerificationDelivery:
                     smtp.ehlo()
                 self._authenticate_and_send(smtp, email, message)
         except (OSError, smtplib.SMTPException) as exc:
-            raise EmailDeliveryFailed("verification email delivery failed") from exc
+            raise EmailDeliveryFailed("account email delivery failed") from exc
 
     def _authenticate_and_send(self, smtp: smtplib.SMTP, recipient: str, message: EmailMessage) -> None:
         if self.username:

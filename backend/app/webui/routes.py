@@ -24,6 +24,8 @@ def mount_web_ui(app: FastAPI) -> None:
     @app.get("/login", include_in_schema=False)
     @app.get("/register", include_in_schema=False)
     @app.get("/verify-email", include_in_schema=False)
+    @app.get("/forgot-password", include_in_schema=False)
+    @app.get("/reset-password", include_in_schema=False)
     @app.get("/workspace/account", include_in_schema=False)
     @app.get("/workspace/wallet", include_in_schema=False)
     @app.get("/workspace/models", include_in_schema=False)

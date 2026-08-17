@@ -78,6 +78,9 @@ class EmailSettings(Protocol):
     def send_verification(self, email: str, token: str) -> None:
         """Send a verification message using the latest persisted settings."""
 
+    def send_password_reset(self, email: str, token: str) -> None:
+        """Send a password-reset message using the latest persisted settings."""
+
 
 class InMemoryEmailSettings:
     """Thread-safe administrator email settings for HTTP tests."""
@@ -127,6 +130,13 @@ class InMemoryEmailSettings:
             snapshot = self._snapshot
             password = self._password
         _delivery(snapshot, password).send_verification(email, token)
+
+    def send_password_reset(self, email: str, token: str) -> None:
+        """Send a password-reset message with the current in-memory settings."""
+        with self._lock:
+            snapshot = self._snapshot
+            password = self._password
+        _delivery(snapshot, password).send_password_reset(email, token)
 
 
 _metadata = MetaData()
@@ -244,6 +254,19 @@ class SqlAlchemyEmailSettings:
         secret_ref = str(row["smtp_password_secret_ref"]) if row["smtp_password_secret_ref"] else ""
         password = self._secrets.read(secret_ref) if secret_ref else ""
         _delivery(snapshot, password).send_verification(email, token)
+
+    def send_password_reset(self, email: str, token: str) -> None:
+        """Resolve the latest password only for the SMTP reset call."""
+        with self._sessions() as database:
+            row = database.execute(
+                select(_settings).where(_settings.c.settings_key == "global")
+            ).mappings().one_or_none()
+        if row is None or not bool(row["configured"]):
+            raise EmailVerificationUnavailable
+        snapshot = _snapshot_from_row(row)
+        secret_ref = str(row["smtp_password_secret_ref"]) if row["smtp_password_secret_ref"] else ""
+        password = self._secrets.read(secret_ref) if secret_ref else ""
+        _delivery(snapshot, password).send_password_reset(email, token)
 
 
 def _validated(command: EmailSettingsUpdate) -> EmailSettingsUpdate:

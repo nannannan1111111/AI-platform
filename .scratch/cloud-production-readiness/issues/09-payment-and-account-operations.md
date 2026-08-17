@@ -1,7 +1,7 @@
 # 09 支付与账户运营阻塞项
 
 Type: task
-Status: open
+Status: claimed
 Stage: 收费发布
 Blocked by: 03, 04
 
@@ -55,3 +55,39 @@ Blocked by: 03, 04
 
 ## Comments
 
+### 2026-08-17 仓库侧可独立实施结果
+
+#### 分析问题
+
+- 确认易支付生产装配只验证支付成功通知；整笔拒付的领域模型、幂等事件表和账务冲正已存在，但通用拒付测试入口没有在生产 Runtime 中启用，也没有任何真实网关退款/拒付签名协议可供安全装配。
+- 确认退款、部分退款、拒付和撤销拒付的事件身份、乱序、金额累计及签名轮换都依赖实际支付网关，不能从支付成功通知推断或用自造事件 ID 代替。
+- 确认账户只有登录后修改密码；SMTP 和邮箱验证已有受控 Secret、公开 HTTPS Origin、摘要令牌和单次消费基础，可复用为密码找回，但公开请求必须避免邮箱枚举并限制邮件轰炸。
+
+#### 设计方案
+
+- 密码找回使用 32 字节随机令牌，数据库只保存 SHA-256 摘要；每个用户最多一个令牌、30 分钟有效、重发替换、单次消费，成功后在同一事务撤销全部会话。
+- 公开请求统一返回 `202`，邮件投递放在响应后的后台任务中，已注册、未注册和暂时无法投递不会通过响应内容或同步 SMTP 时延直接区分；规范化邮箱与可信客户端 IP 分别按默认 `3/小时`、`5/小时` 限流。
+- 支付渠道导出统一为只读事件 CSV，通过滚动时间窗与本地 `payment_success_events` / `payment_chargeback_events` 对账；渠道单边、本地单边、订单/金额不匹配以及退款/部分退款均返回非零退出码并要求人工工单。
+- 未取得实际网关文档和沙箱前保持在线支付关闭；人工资金异常采用双人复核，禁止直接修改订单、删除账务事实或复用非本渠道签名。
+
+#### 修改代码
+
+- 新增迁移 `0061_password_reset_tokens`、账户 Interface 及内存/SQLAlchemy Adapter、SMTP 重置邮件、Email Settings 代理、`/api/v1/auth/password-reset` 和 `/api/v1/auth/reset-password`。
+- 新增 `/forgot-password`、`/reset-password` 用户页面；令牌只从 URL fragment 读取并立即从地址栏清除，成功后清空当前浏览器令牌并返回登录。
+- 新增密码重置限流生产变量并接入 Compose、通用部署模板和腾讯云部署模板。
+- 新增只读 `backend/scripts/reconcile_payment_events.py` 及精确金额、时区、重复事件、缺失/不匹配/不支持事件测试。
+- 新增 `docs/payment-and-account-operations.md`，记录每日对账 CSV 契约、退出码、双人复核 Runbook 和自动 Adapter 上线门槛。
+
+#### 质量检测
+
+- Ruff 全部通过；严格 MyPy 对 136 个源文件通过。
+- PostgreSQL 17 完整后端回归：`597 passed, 1 skipped`；唯一跳过是 Windows 无法表达 Linux mode bits 的既有权限契约。新迁移在 PostgreSQL upgrade/downgrade、并发迁移和旧版本升级测试中通过。
+- 前端 `npm run check`、`npm run build` 通过；用户 Web 脚本 `node --check` 通过。
+- Production Compose 在显式测试数据库 URL 和 32 字节限流密钥下解析通过；`git diff --check` 通过。
+- 临时 PostgreSQL 17 容器已经按精确名称验证并清理，没有创建云资源、支付交易或外部消息。
+
+#### 尚未完成的外部支付验收
+
+- 仍需确定真实支付网关并取得退款、部分退款、拒付、撤销拒付的正式文档、稳定事件 ID、原始体签名、重放窗口、密钥轮换和沙箱。
+- 仍需在沙箱验证成功、重复、乱序、错 PID/金额/币种/签名、部分退款累计、通知失败重试和每日真实对账。
+- 上述外部条件完成前，本任务保持 `claimed`，不得标记 `resolved`；已完成的密码找回和只读对账不等于支付异常自动化已经完成。

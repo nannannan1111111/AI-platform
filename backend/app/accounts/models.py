@@ -32,6 +32,14 @@ class EmailVerificationUnavailable(RuntimeError):
     """当前部署没有可用的邮箱验证投递途径。"""
 
 
+class InvalidPasswordReset(ValueError):
+    """密码重置令牌未知、已过期或已经使用。"""
+
+
+class PasswordResetUnavailable(RuntimeError):
+    """当前部署没有可用的密码重置邮件投递途径。"""
+
+
 @dataclass(frozen=True, slots=True)
 class Registration:
     """一次成功注册产生的用户与个人账户空间。"""

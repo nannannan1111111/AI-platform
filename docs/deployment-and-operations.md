@@ -60,6 +60,8 @@ chmod 600 deploy/.env
 | `AUTH_LOGIN_WINDOW_SECONDS` | 登录固定窗口，默认 `600` 秒 |
 | `AUTH_REGISTER_IP_LIMIT` / `AUTH_REGISTER_WINDOW_SECONDS` | 注册 IP 上限与窗口，默认 `5` 次/`3600` 秒 |
 | `AUTH_EMAIL_VERIFICATION_ACCOUNT_LIMIT` / `AUTH_EMAIL_VERIFICATION_WINDOW_SECONDS` | 每账户重发验证邮件上限与窗口，默认 `3` 次/`3600` 秒 |
+| `AUTH_PASSWORD_RESET_IP_LIMIT` / `AUTH_PASSWORD_RESET_EMAIL_LIMIT` | 每个密码重置窗口的 IP/邮箱请求上限，默认 `5` / `3` |
+| `AUTH_PASSWORD_RESET_WINDOW_SECONDS` | 密码重置固定窗口，默认 `3600` 秒 |
 | `TRUSTED_PROXY_CIDRS` | 直接连接应用的可信反向代理网段，逗号分隔；留空时完全忽略 `X-Forwarded-For` |
 | `ALLOWED_HOSTS` | 逗号分隔的精确公网域名，不含协议、路径或通配符；应用自动补充 `127.0.0.1` 和 `localhost` 供本机健康检查 |
 | `ENABLE_HSTS` | 仅在 HTTPS 入口、HTTP 到 HTTPS 跳转和可信代理均验收后设为 `true`；此前保持默认 `false` |
@@ -150,7 +152,7 @@ curl -fsS http://127.0.0.1:8000/readyz
 
 管理员可以在 `/admin/generation-tasks` 查看全站排队中和生成中的任务，并取消单个任务。取消会把任务幂等标记为 `cancelled`、释放该任务的全部冻结额度并拒收迟到结果；如果 Provider 请求已经发出，当前 Adapter 不保证能够物理中断上游执行，因此可能仍产生 Provider 成本，但不会再向用户结算或交付。
 
-生成 Worker 与 Provider 后台轮询/核实仍不装配；支付已装配易支付兼容下单和成功通知，但不包含退款、部分退款或拒付自动通知。邮箱验证已经通过 SMTP 装配；密码找回邮件仍不在当前范围内。这里的“后台轮询”不包括 `OpenAICompatibleImageSubmissions` 在一次提交请求生命周期内、拿到任务标识后执行的最多 240 秒查询；该查询不会在请求结束后继续。Web 进程每秒扫描达到管理员配置截止点的生成任务，并每分钟判断路由健康是否已满 24 小时；生成截止扫描只失败退款和拒绝迟到交付，不查询或取消上游。没有上游任务标识时不得按本地任务 ID 盲目轮询或重新 POST，以免查询错误任务或产生二次扣费。路由检测期间继续沿用最近完成状态，完整结果持久化后才更新，并且不会改动路由 `enabled` 开关。Provider 密钥当前由受控文件权限而不是 KMS 静态加密。
+生成 Worker 与 Provider 后台轮询/核实仍不装配；支付已装配易支付兼容下单和成功通知，但不包含退款、部分退款或拒付自动通知；每日只读对账和双人复核流程见 `docs/payment-and-account-operations.md`。邮箱验证和密码找回均已通过 SMTP 装配；密码重置令牌只存摘要、30 分钟单次有效，成功后撤销该用户全部会话。这里的“后台轮询”不包括 `OpenAICompatibleImageSubmissions` 在一次提交请求生命周期内、拿到任务标识后执行的最多 240 秒查询；该查询不会在请求结束后继续。Web 进程每秒扫描达到管理员配置截止点的生成任务，并每分钟判断路由健康是否已满 24 小时；生成截止扫描只失败退款和拒绝迟到交付，不查询或取消上游。没有上游任务标识时不得按本地任务 ID 盲目轮询或重新 POST，以免查询错误任务或产生二次扣费。路由检测期间继续沿用最近完成状态，完整结果持久化后才更新，并且不会改动路由 `enabled` 开关。Provider 密钥当前由受控文件权限而不是 KMS 静态加密。
 
 ## 备份与恢复
 

@@ -22,7 +22,9 @@ from app.accounts.models import (
     EmailVerificationUnavailable,
     InvalidCredentials,
     InvalidEmailVerification,
+    InvalidPasswordReset,
     InvalidSession,
+    PasswordResetUnavailable,
     RegisteredUser,
     Registration,
 )
@@ -54,6 +56,14 @@ class _EmailVerificationRecord:
     expires_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class _PasswordResetRecord:
+    """只保存密码重置令牌摘要绑定的邮箱和到期时间。"""
+
+    email: str
+    expires_at: datetime
+
+
 class InMemoryAccountAccess:
     """在单进程内原子注册用户并创建个人账户空间。"""
 
@@ -64,11 +74,13 @@ class InMemoryAccountAccess:
         session_ttl: timedelta = timedelta(days=30),
         verification_delivery: EmailVerificationDelivery | None = None,
         verification_ttl: timedelta = timedelta(hours=24),
+        password_reset_ttl: timedelta = timedelta(minutes=30),
     ) -> None:
         """创建空账户仓储。"""
         self._records_by_email: dict[str, _AccountRecord] = {}
         self._sessions: dict[str, _SessionRecord] = {}
         self._email_verifications: dict[str, _EmailVerificationRecord] = {}
+        self._password_resets: dict[str, _PasswordResetRecord] = {}
         self._lock = Lock()
         self._password_hash = PasswordHash.recommended()
         self._dummy_password_hash = self._password_hash.hash(secrets.token_urlsafe(32))
@@ -76,6 +88,7 @@ class InMemoryAccountAccess:
         self._session_ttl = session_ttl
         self._verification_delivery = verification_delivery
         self._verification_ttl = verification_ttl
+        self._password_reset_ttl = password_reset_ttl
 
     def register(self, email: str, password: str) -> Registration:
         """注册邮箱身份并返回其个人账户空间和零余额。"""
@@ -184,6 +197,36 @@ class InMemoryAccountAccess:
                 token: item for token, item in self._sessions.items() if item.registration.user_id != user_id
             }
 
+    def request_password_reset(self, email: str) -> None:
+        """若邮箱存在则替换旧令牌并投递新密码重置链接。"""
+        if not _delivery_is_available(self._verification_delivery):
+            raise PasswordResetUnavailable
+        normalized_email = email.strip().casefold()
+        with self._lock:
+            if normalized_email not in self._records_by_email:
+                return
+        self._deliver_password_reset(normalized_email)
+
+    def reset_password(self, token: str, new_password: str) -> None:
+        """消费有效令牌、更新密码并撤销该用户全部会话。"""
+        validated_password = registration_password(new_password)
+        token_hash = _token_hash(token)
+        with self._lock:
+            reset = self._password_resets.pop(token_hash, None)
+            if reset is None or reset.expires_at <= self._clock():
+                raise InvalidPasswordReset
+            record = self._records_by_email.get(reset.email)
+            if record is None:
+                raise InvalidPasswordReset
+            record.password_hash = self._password_hash.hash(validated_password)
+            user_id = record.registration.user_id
+            self._password_resets = {
+                key: item for key, item in self._password_resets.items() if item.email != reset.email
+            }
+            self._sessions = {
+                key: item for key, item in self._sessions.items() if item.registration.user_id != user_id
+            }
+
     def _deliver_verification(self, email: str) -> None:
         """替换该邮箱的旧令牌并把新令牌交给投递 Adapter。"""
         if self._verification_delivery is None:
@@ -207,6 +250,30 @@ class InMemoryAccountAccess:
             with self._lock:
                 self._email_verifications.pop(token_hash, None)
                 self._email_verifications.update(previous)
+            raise
+
+    def _deliver_password_reset(self, email: str) -> None:
+        """替换该邮箱的旧重置令牌，并在投递失败时恢复旧令牌。"""
+        delivery = self._verification_delivery
+        if delivery is None:
+            raise PasswordResetUnavailable
+        token = secrets.token_urlsafe(32)
+        with self._lock:
+            previous = {key: item for key, item in self._password_resets.items() if item.email == email}
+            self._password_resets = {
+                key: item for key, item in self._password_resets.items() if item.email != email
+            }
+            token_hash = _token_hash(token)
+            self._password_resets[token_hash] = _PasswordResetRecord(
+                email=email,
+                expires_at=self._clock() + self._password_reset_ttl,
+            )
+        try:
+            delivery.send_password_reset(email, token)
+        except Exception:
+            with self._lock:
+                self._password_resets.pop(token_hash, None)
+                self._password_resets.update(previous)
             raise
 
     def credit_balance(self, access_token: str) -> CreditBalance:

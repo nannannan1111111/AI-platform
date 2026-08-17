@@ -130,12 +130,14 @@ function authView(mode) {
         <div class="field"><label for="email">邮箱地址</label><input id="email" name="email" type="email" autocomplete="email" required placeholder="name@example.com"></div>
         <div class="field"><label for="password">访问密码</label><input id="password" name="password" type="password" minlength="12" autocomplete="${registering ? 'new-password' : 'current-password'}" required placeholder="至少 12 个字符"></div>
         <button class="primary-btn wide" type="submit">${registering ? '注册并进入账户中心' : '登录账户中心'}</button>
+        ${registering ? '' : '<div class="auth-switch"><button class="text-btn" type="button" id="forgot-password">忘记密码？</button></div>'}
         <div class="auth-switch">${registering ? '已经有账户？' : '还没有账户？'} <button class="text-btn" type="button" id="auth-switch">${registering ? '返回登录' : '立即注册'}</button></div>
       </form>
     </section>
   </main>`;
 
   document.getElementById('auth-switch').addEventListener('click', () => navigate(registering ? '/login' : '/register'));
+  document.getElementById('forgot-password')?.addEventListener('click', () => navigate('/forgot-password'));
   document.getElementById('auth-form').addEventListener('submit', async event => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -239,6 +241,58 @@ async function ensureAccountSummary() {
   state.adminProviders = providers;
   state.accountSummaryLoaded = true;
   state.accountSummaryLoadedAt = Date.now();
+}
+
+function passwordResetRequestPage() {
+  app.innerHTML = `<main class="auth-shell">
+    <section class="auth-brand"><div class="brand"><div class="brand-symbol">∞</div><div><strong>乐云工坊</strong><span>专业 AI 创作工作台</span></div></div><div class="auth-message"><span class="eyebrow" style="color:#8ed5ae">Account recovery</span><h1>安全找回您的账户。</h1><p>为保护隐私，无论邮箱是否注册，页面都会显示相同结果。</p></div></section>
+    <section class="auth-form-wrap"><form class="auth-form" id="password-reset-request-form"><span class="eyebrow">找回密码</span><h2>发送重置邮件</h2><p>输入注册邮箱。如果账户存在且邮件服务可用，您会收到一封 30 分钟内有效的邮件。</p><div class="field"><label for="reset-email">邮箱地址</label><input id="reset-email" name="email" type="email" autocomplete="email" required maxlength="320" placeholder="name@example.com"></div><button class="primary-btn wide" type="submit">发送重置邮件</button><div class="auth-switch"><button class="text-btn" type="button" id="reset-back-login">返回登录</button></div></form></section>
+  </main>`;
+  document.getElementById('reset-back-login').onclick = () => navigate('/login');
+  document.getElementById('password-reset-request-form').onsubmit = async event => {
+    event.preventDefault();
+    const submit = event.currentTarget.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      const form = new FormData(event.currentTarget);
+      await api('/api/v1/auth/password-reset', { method: 'POST', body: JSON.stringify({ email: form.get('email') }) });
+      event.currentTarget.innerHTML = '<span class="eyebrow">找回密码</span><h2>请求已受理</h2><p>如果该邮箱对应账户，重置邮件将发送到该地址。请检查收件箱和垃圾邮件目录。</p><button class="primary-btn wide" type="button" id="reset-request-complete">返回登录</button>';
+      document.getElementById('reset-request-complete').onclick = () => navigate('/login');
+    } catch (error) {
+      toast(error.message);
+      submit.disabled = false;
+    }
+  };
+}
+
+function resetPasswordPage() {
+  const token = new URLSearchParams(window.location.hash.slice(1)).get('token') || '';
+  window.history.replaceState({}, '', '/reset-password');
+  app.innerHTML = `<main class="auth-shell">
+    <section class="auth-brand"><div class="brand"><div class="brand-symbol">∞</div><div><strong>乐云工坊</strong><span>专业 AI 创作工作台</span></div></div><div class="auth-message"><span class="eyebrow" style="color:#8ed5ae">Password reset</span><h1>设置新的访问密码。</h1><p>链接只能使用一次；成功后所有设备上的登录会话都会失效。</p></div></section>
+    <section class="auth-form-wrap"><form class="auth-form" id="reset-password-form"><span class="eyebrow">重置密码</span><h2>${token ? '设置新密码' : '重置链接无效'}</h2>${token ? '<p>新密码至少需要 12 个字符。</p><div class="field"><label for="reset-new-password">新密码</label><input id="reset-new-password" name="new_password" type="password" minlength="12" autocomplete="new-password" required></div><div class="field"><label for="reset-confirm-password">确认新密码</label><input id="reset-confirm-password" name="confirm_password" type="password" minlength="12" autocomplete="new-password" required></div><button class="primary-btn wide" type="submit">确认重置</button>' : '<p>链接缺少令牌，请从最新的密码重置邮件重新打开。</p><button class="primary-btn wide" type="button" id="invalid-reset-back">返回登录</button>'}</form></section>
+  </main>`;
+  if (!token) {
+    document.getElementById('invalid-reset-back').onclick = () => navigate('/login');
+    return;
+  }
+  document.getElementById('reset-password-form').onsubmit = async event => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    if (form.get('new_password') !== form.get('confirm_password')) return toast('两次输入的新密码不一致');
+    const submit = event.currentTarget.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      await api('/api/v1/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, new_password: form.get('new_password') }) });
+      setToken(null);
+      state.user = null;
+      event.currentTarget.innerHTML = '<span class="eyebrow">重置密码</span><h2>密码已更新</h2><p>所有旧登录会话均已失效，请使用新密码重新登录。</p><button class="primary-btn wide" type="button" id="reset-password-complete">返回登录</button>';
+      document.getElementById('reset-password-complete').onclick = () => navigate('/login', { replace: true });
+    } catch (error) {
+      toast(error.message);
+      submit.disabled = false;
+    }
+  };
 }
 
 async function authenticatedPlatformContentImage(url) {
@@ -3550,6 +3604,8 @@ function render() {
     state.maskMediaEntry = null;
   }
   if (state.route === '/verify-email') return verifyEmailPage();
+  if (state.route === '/forgot-password') return passwordResetRequestPage();
+  if (state.route === '/reset-password') return resetPasswordPage();
   if (state.route === '/' || state.route === '/login' || state.route === '/register') {
     if (state.token && state.route !== '/register') return navigate('/workspace/account', { replace: true });
     return authView(state.route === '/register' ? 'register' : 'login');

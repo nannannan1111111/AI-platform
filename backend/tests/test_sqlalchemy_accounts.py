@@ -5,19 +5,32 @@ import pytest
 from alembic.config import Config
 
 from alembic import command
-from app.accounts import InvalidCredentials, InvalidEmailVerification, InvalidSession, SqlAlchemyAccountAccess
+from app.accounts import (
+    InvalidCredentials,
+    InvalidEmailVerification,
+    InvalidPasswordReset,
+    InvalidSession,
+    SqlAlchemyAccountAccess,
+)
 
 
 class _RecordingEmailVerificationDelivery:
     def __init__(self) -> None:
         self.messages: list[tuple[str, str]] = []
+        self.password_resets: list[tuple[str, str]] = []
 
     def send_verification(self, email: str, token: str) -> None:
         self.messages.append((email, token))
 
+    def send_password_reset(self, email: str, token: str) -> None:
+        self.password_resets.append((email, token))
+
 
 class _FailingEmailVerificationDelivery:
     def send_verification(self, email: str, token: str) -> None:
+        raise RuntimeError("SMTP unavailable")
+
+    def send_password_reset(self, email: str, token: str) -> None:
         raise RuntimeError("SMTP unavailable")
 
 
@@ -194,6 +207,59 @@ def test_sqlalchemy_change_password_revokes_all_sessions(tmp_path) -> None:
     with pytest.raises(InvalidCredentials):
         accounts.login("artist@example.com", "a-correct-horse-battery-staple")
     assert accounts.login("artist@example.com", "a-new-correct-horse-password").access_token
+
+
+def test_sqlalchemy_password_reset_survives_restart_replaces_old_token_and_revokes_sessions(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'password-reset.db').as_posix()}"
+    delivery = _RecordingEmailVerificationDelivery()
+    accounts = SqlAlchemyAccountAccess.for_database_url(
+        database_url,
+        initialize_schema=True,
+        verification_delivery=delivery,
+    )
+    old_password = "a-correct-horse-battery-staple"
+    new_password = "a-new-correct-horse-battery-staple"
+    accounts.register("artist@example.com", old_password)
+    first = accounts.login("artist@example.com", old_password)
+    second = accounts.login("artist@example.com", old_password)
+    accounts.request_password_reset("artist@example.com")
+    replaced_token = delivery.password_resets[-1][1]
+    accounts.request_password_reset("artist@example.com")
+    active_token = delivery.password_resets[-1][1]
+
+    restarted = SqlAlchemyAccountAccess.for_database_url(database_url)
+    with pytest.raises(InvalidPasswordReset):
+        restarted.reset_password(replaced_token, new_password)
+    restarted.reset_password(active_token, new_password)
+
+    for session in (first, second):
+        with pytest.raises(InvalidSession):
+            restarted.current_user(session.access_token)
+    with pytest.raises(InvalidCredentials):
+        restarted.login("artist@example.com", old_password)
+    assert restarted.login("artist@example.com", new_password).access_token
+    with pytest.raises(InvalidPasswordReset):
+        restarted.reset_password(active_token, "another-correct-horse-password")
+
+
+def test_sqlalchemy_password_reset_token_expires(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'expired-password-reset.db').as_posix()}"
+    current_time = [datetime(2026, 8, 17, 8, 0, tzinfo=UTC)]
+    delivery = _RecordingEmailVerificationDelivery()
+    accounts = SqlAlchemyAccountAccess.for_database_url(
+        database_url,
+        initialize_schema=True,
+        clock=lambda: current_time[0],
+        verification_delivery=delivery,
+        password_reset_ttl=timedelta(minutes=30),
+    )
+    accounts.register("artist@example.com", "a-correct-horse-battery-staple")
+    accounts.request_password_reset("artist@example.com")
+    token = delivery.password_resets[-1][1]
+    current_time[0] += timedelta(minutes=31)
+
+    with pytest.raises(InvalidPasswordReset):
+        accounts.reset_password(token, "a-new-correct-horse-battery-staple")
 
 
 def test_sqlalchemy_resend_verification_replaces_previous_token(tmp_path) -> None:
