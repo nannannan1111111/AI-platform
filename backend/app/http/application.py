@@ -141,6 +141,7 @@ from app.model_routing import (
     RoutingMode,
     RoutingPolicyUpdate,
 )
+from app.observability import METRICS, RequestObservabilityMiddleware, metrics_response
 from app.orders import (
     DirectRechargeOrderSubmission,
     PaymentAmountMismatch,
@@ -889,11 +890,13 @@ def create_app(
     auth_abuse_policies: AuthAbusePolicies | None = None,
     client_ip_resolver: ClientIpResolver | None = None,
     http_security: HttpSecuritySettings | None = None,
+    metrics_token: str | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> FastAPI:
     """创建只依赖账户 Interface 的 FastAPI 应用。"""
     app = FastAPI(title="乐云工坊 SaaS")
     install_http_security(app, http_security or HttpSecuritySettings())
+    app.add_middleware(RequestObservabilityMiddleware, metrics=METRICS)
     abuse_policies = auth_abuse_policies or AuthAbusePolicies.defaults()
     resolve_client_ip = client_ip_resolver or ClientIpResolver()
     app.state.auth_abuse_protection = auth_abuse_protection
@@ -902,6 +905,11 @@ def create_app(
     def health_check() -> dict[str, str]:
         """Report that the HTTP process is ready to receive requests."""
         return {"status": "ok"}
+
+    @app.get("/metrics", include_in_schema=False)
+    def metrics(request: Request) -> PlainTextResponse:
+        """Expose Prometheus metrics only to the explicitly configured scraper."""
+        return metrics_response(request, token=metrics_token, metrics=METRICS)
 
     @app.post("/api/v1/auth/register", status_code=status.HTTP_202_ACCEPTED)
     def register(credentials: _Credentials, request: Request) -> dict[str, str]:
@@ -2406,6 +2414,7 @@ def create_app(
             response_class=PlainTextResponse,
         )
         async def epay_notification(request: Request) -> PlainTextResponse:
+            METRICS.inc("payment_notifications_total", labels={"provider": "epay"})
             parameters = {key: value for key, value in request.query_params.items()}
             if request.method == "POST":
                 try:

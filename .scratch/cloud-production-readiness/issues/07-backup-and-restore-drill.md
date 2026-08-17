@@ -1,7 +1,7 @@
 # 07 自动备份与恢复演练
 
 Type: task
-Status: open
+Status: claimed
 Stage: 可运维
 Blocked by: 05, 06
 
@@ -55,3 +55,8 @@ Blocked by: 05, 06
 
 ## Comments
 
+### 2026-08-18 仓库侧先行实现
+
+- 新增 `backend/app/backup_manifest.py` 与 `backend/scripts/backup_manifest.py`，支持恢复点元数据、文件 SHA-256、原子写入（0600）和完整性校验。
+- 新增定向测试，覆盖完整恢复点、篡改文件拒绝和必填组件校验。
+- 该实现不宣称已完成腾讯云 PITR、COS、KMS 或隔离恢复；真实云资源和 RPO/RTO 演练仍依赖任务 05/06 与用户后续凭据。

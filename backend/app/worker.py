@@ -5,12 +5,14 @@ from __future__ import annotations
 import logging
 import os
 import signal
+import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from threading import Event
 
 from sqlalchemy import Engine, text
 
 from app.database_runtime import postgres_advisory_generation_dispatch_lock, postgres_advisory_worker_slot
+from app.observability import METRICS, install_structured_logging
 from app.runtime import create_production_app
 
 _LOG = logging.getLogger(__name__)
@@ -87,11 +89,15 @@ _PENDING_TASKS = text(
      LIMIT :limit
     """
 )
+_OLDEST_QUEUED = text(
+    "SELECT EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - MIN(created_at))) "
+    "FROM generation_tasks WHERE status = 'queued'"
+)
 
 
 def run() -> None:
     """Poll durable queued tasks until the container is asked to stop."""
-    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
+    install_structured_logging(getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO))
     poll_seconds = _positive_float("GENERATION_WORKER_POLL_SECONDS", 0.5)
     batch_size = _positive_int("GENERATION_WORKER_BATCH_SIZE", 20)
     application = create_production_app()
@@ -106,6 +112,7 @@ def run() -> None:
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
+    worker_index: int | None = None
     try:
         with postgres_advisory_worker_slot(engine, deployed_limit) as worker_index:
             if worker_index is None:
@@ -116,6 +123,7 @@ def run() -> None:
                 poll_seconds,
                 batch_size,
             )
+            METRICS.set("generation_worker_heartbeat", 1, labels={"worker_index": worker_index})
             with ThreadPoolExecutor(max_workers=50, thread_name_prefix="generation") as executor:
                 in_flight: dict[Future[bool], str] = {}
                 last_capacity: tuple[int, int] | None = None
@@ -135,8 +143,15 @@ def run() -> None:
                     for future in completed:
                         task_id = in_flight.pop(future)
                         try:
-                            future.result()
+                            processed = future.result()
+                            METRICS.inc(
+                                "generation_tasks_processed_total",
+                                labels={"outcome": "submitted" if processed else "skipped"},
+                            )
+                            if processed:
+                                METRICS.set("generation_worker_last_success_timestamp", time.time(), labels={"worker_index": worker_index})
                         except Exception:
+                            METRICS.inc("generation_tasks_processed_total", labels={"outcome": "error"})
                             _LOG.exception("generation task processing failed task_id=%s", task_id)
                     worker_enabled = worker_index <= capacity.enabled_workers
                     available = max(0, capacity.concurrency_per_worker - len(in_flight)) if worker_enabled else 0
@@ -147,6 +162,9 @@ def run() -> None:
                                 _PENDING_TASKS,
                                 {"limit": batch_size},
                             ))
+                            oldest_age = connection.execute(_OLDEST_QUEUED).scalar_one_or_none()
+                        METRICS.set("generation_queue_oldest_task_age_seconds", float(oldest_age or 0))
+                        METRICS.set("generation_worker_in_flight", len(in_flight), labels={"worker_index": worker_index})
                         active_task_ids = set(in_flight.values())
                         for (
                             account_space_id,
@@ -181,6 +199,8 @@ def run() -> None:
                             stopping.wait(poll_seconds)
     finally:
         engine.dispose()
+        if worker_index is not None:
+            METRICS.set("generation_worker_heartbeat", 0, labels={"worker_index": worker_index})
         _LOG.info("generation worker stopped")
 
 
