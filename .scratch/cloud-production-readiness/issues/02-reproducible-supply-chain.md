@@ -110,3 +110,11 @@ Blocked by: 01
 - 已确定远端为 `nannannan1111111/AI-platform`、默认分支为 `main`；本地供应链工作流已包含普通提交的构建/扫描门禁，以及 `v*` 标签触发的 GHCR 推送、provenance、SBOM 和 Cosign keyless 签名。
 - 首次提交已创建为 `b11ad41`，但当前环境无法连接 `github.com:443`，且当前 Codex 进程没有 GitHub CLI 登录态，因此尚未获得真实 Actions、GHCR 和 Cosign 证明。
 - 用户提供的测试发布选项仍是“允许/暂不允许”二选一原文，未形成单一授权结论。在用户明确选择“允许”前，不创建 `v0.1.0-rc.1`，也不触发 GHCR 发布。
+
+### 2026-08-17 GitHub 远端验证结果
+
+- 供应链工作流已在真实 GitHub Runner 上完成锁文件复现、生产镜像构建、SPDX SBOM、Trivy Critical/High 硬门禁和证据上传。
+- 前两次失败分别发现 SBOM 输出目录缺失，以及 Trivy Action 的外部二进制安装脚本连续下载失败；均未被误判为漏洞命中或通过。最终方案预创建证据目录，并使用固定多架构摘要 `sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436` 的官方 Trivy 0.65.0 容器。
+- 远端供应链运行 [31991272283](https://github.com/nannannan1111111/AI-platform/actions/runs/31991272283) 全绿，最终 `supply-chain-gate` 成功；证据制品 `supply-chain-evidence-8ff5af30823d68425979e326dbc9ca8d9c6a6192` 包含 SBOM 和 SARIF 漏洞报告。
+- 普通 `main` 提交按设计跳过 `publish-signed-image`，没有创建版本标签或向 GHCR 发布镜像。
+- 由于测试发布授权仍未明确，尚未验证真实 GHCR digest、BuildKit provenance 与 Cosign OIDC 签名；加上私有仓库套餐无法强制 `supply-chain-gate`，工单继续保持 `claimed`。

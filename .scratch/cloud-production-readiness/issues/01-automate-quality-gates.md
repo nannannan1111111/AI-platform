@@ -104,3 +104,12 @@ Stage: 发布可信
 - 已确认托管仓库为 `nannannan1111111/AI-platform`，默认分支为 `main`，并获得初始化 Git、提交、推送、运行 Actions 和配置分支保护的授权。
 - 已初始化本地 Git、配置 `origin`，完成首次提交 `b11ad41`。提交前已排除本机数据库 dump、部署状态文件和完整回滚源码快照；这些备份仍保留在工作区。
 - 暂未推送：当前 Codex 进程的 `gh auth status` 显示未登录，同时 `github.com:443` TCP 检测失败。恢复网络并在当前终端建立 GitHub CLI 登录态后，再推送 `main`、运行 Actions 并将 `release-gate` 配置为必需检查。
+
+### 2026-08-17 GitHub 远端验证结果
+
+- 已通过本机代理完成 GitHub CLI 登录，推送 `main` 并实际运行 GitHub Actions。
+- 首次远端运行正确暴露三个问题：根 `.gitignore` 的 `media/` 误忽略 `backend/app/media/`、PowerShell 将 `git -C` 误绑定为函数参数、供应链 SBOM 输出目录未预先创建。
+- 提交 `72204a2` 修复源码包漏提交、跨平台 Git 调用和 SBOM 目录；提交 `8ff5af3` 将不稳定的 Trivy 在线安装脚本替换为固定摘要的官方 Trivy 0.65.0 容器。
+- 远端质量运行 [31991272257](https://github.com/nannannan1111111/AI-platform/actions/runs/31991272257) 全绿：`backend-quality`、PostgreSQL 17 完整 `backend-tests`、`frontend-quality`、`production-contract` 和最终 `release-gate` 全部成功。
+- 仓库为私有仓库且当前 GitHub 套餐不支持分支保护或 Repository Rulesets；两个 API 均返回 `403 Upgrade to GitHub Pro or make this repository public`。当前唯一直接协作者为仓库所有者，未擅自把仓库改为公开。
+- 因无法在平台侧强制 `release-gate`，工单继续保持 `claimed`。升级 GitHub Pro 或明确授权公开仓库后，才能完成强制 PR、禁止管理员绕过和必需检查配置。
