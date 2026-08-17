@@ -225,6 +225,6 @@ python scripts/capacity_smoke.py https://studio.example.com/readyz --concurrency
 
 2026-08-12 在 4 个 Web 进程、4 个生成 Worker 和 PostgreSQL `max_connections=100` 的本机 Docker 环境实测：100 并发、1000 次 `/readyz` 请求为 0 失败，约 139 RPS，p95 约 2.16 秒，p99 约 3.51 秒；探针期间数据库观测到 42 条总连接。此数据仅作为该机器和 Docker Desktop 环境的起步基线，不代表 Provider 生图吞吐或公网端到端 SLA。
 
-本 Compose 是单主机拓扑，Web 与 Worker 共享同一受控媒体目录。扩展到多台主机前，必须把该目录放到具备正确原子写/一致性语义的共享存储，或补齐支持上传与读取的 S3 Adapter；Provider 密钥也应迁移到共享 Secret Manager/KMS。PostgreSQL advisory lock 已保证周期任务和任务提交在多进程下不会重复执行。
+本 Compose 是单主机拓扑，Web 与 Worker 共享同一受控媒体目录。仓库已补齐 S3 兼容 Adapter 的写入、读取、删除和晋升契约，但尚未接入生产组合根；扩展到多台主机前，必须在隔离环境验证 COS 的私有桶、服务端加密、原子晋升和权限策略，再切换媒体装配。Provider 密钥也应迁移到共享 Secret Manager/KMS。PostgreSQL advisory lock 已保证周期任务和任务提交在多进程下不会重复执行。
 - 反向代理证书有效，应用端口仍只绑定回环地址。
 - Docker 日志轮转生效，日志中没有连接串、Cookie、Bearer token、API Key 或用户图片内容。

@@ -3,11 +3,11 @@
 import hashlib
 import os
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 
 class MediaObjectDeletionFailed(RuntimeError):
@@ -20,6 +20,14 @@ class MediaObjectPromotionFailed(RuntimeError):
 
 class MediaObjectConflict(ValueError):
     """稳定对象键已经保存了不同的媒体内容。"""
+
+
+class MediaObjectReadFailed(RuntimeError):
+    """外部对象存储未能读取媒体内容。"""
+
+
+class MediaObjectWriteFailed(RuntimeError):
+    """外部对象存储未能写入媒体内容。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +179,9 @@ class InMemoryMediaObjects:
 
 
 class _S3Client(Protocol):
+    def get_object(self, **request: Any) -> object:
+        """读取 S3 兼容对象内容。"""
+
     def head_object(self, **request: Any) -> object:
         """读取 S3 兼容对象元数据。"""
 
@@ -180,9 +191,12 @@ class _S3Client(Protocol):
     def copy_object(self, **request: Any) -> object:
         """提交一次 S3 兼容对象复制请求。"""
 
+    def put_object(self, **request: Any) -> object:
+        """写入 S3 兼容对象内容。"""
+
 
 class S3CompatibleMediaObjects:
-    """通过外部注入客户端删除 S3 兼容对象，不管理任何凭据。"""
+    """通过外部注入客户端完成媒体生命周期，不管理任何凭据。"""
 
     def __init__(self, client: _S3Client, *, bucket: str) -> None:
         """装配外部客户端和非空 bucket 名称。"""
@@ -192,10 +206,66 @@ class S3CompatibleMediaObjects:
         self._client = client
         self._bucket = normalized_bucket
 
+    def put_temporary(
+        self,
+        *,
+        account_space_id: str,
+        task_id: str,
+        result_reference: str,
+        content: bytes,
+        mime_type: str,
+    ) -> StoredMediaObject:
+        """按与文件 Adapter 相同的稳定键幂等写入临时媒体。"""
+        raw = bytes(content)
+        identity = "\0".join((account_space_id, task_id, result_reference)).encode()
+        account_segment = hashlib.sha256(account_space_id.encode()).hexdigest()[:16]
+        task_segment = hashlib.sha256(task_id.encode()).hexdigest()[:16]
+        result_segment = hashlib.sha256(identity).hexdigest()[:32]
+        object_key = f"temporary/{account_segment}/{task_segment}/{result_segment}"
+        content_hash = hashlib.sha256(raw).hexdigest()
+        try:
+            existing = self._client.head_object(Bucket=self._bucket, Key=object_key)
+        except Exception as exc:
+            if not _s3_not_found(exc):
+                raise MediaObjectWriteFailed(object_key) from exc
+            try:
+                self._client.put_object(
+                    Bucket=self._bucket,
+                    Key=object_key,
+                    Body=raw,
+                    ContentType=mime_type,
+                    Metadata={"content_hash": content_hash},
+                )
+            except Exception as put_exc:
+                raise MediaObjectWriteFailed(object_key) from put_exc
+        else:
+            metadata = _s3_metadata(existing)
+            existing_hash = metadata.get("content_hash", "")
+            if existing_hash and existing_hash != content_hash:
+                raise MediaObjectConflict(result_reference)
+            existing_size = _s3_size(existing)
+            if existing_hash:
+                if existing_size is not None and existing_size != len(raw):
+                    raise MediaObjectConflict(result_reference)
+            elif self.read(object_key) != raw:
+                raise MediaObjectConflict(result_reference)
+        return StoredMediaObject(object_key, len(raw), content_hash)
+
+    def read(self, object_key: str) -> bytes:
+        """读取对象内容并关闭兼容客户端返回的流。"""
+        self._validate_key(object_key)
+        try:
+            response = self._client.get_object(Bucket=self._bucket, Key=object_key)
+            response_any = cast(Any, response)
+            body = response["Body"] if isinstance(response, Mapping) else response_any.Body
+            content = body if isinstance(body, bytes) else body.read()
+            return bytes(content)
+        except Exception as exc:
+            raise MediaObjectReadFailed(object_key) from exc
+
     def delete(self, object_key: str) -> None:
         """按配置 bucket 和不透明对象键发起幂等删除。"""
-        if not object_key:
-            raise ValueError("媒体对象键不能为空")
+        self._validate_key(object_key)
         try:
             self._client.delete_object(Bucket=self._bucket, Key=object_key)
         except Exception as exc:
@@ -203,12 +273,14 @@ class S3CompatibleMediaObjects:
 
     def promote(self, temporary_key: str, persistent_key: str) -> None:
         """先复制到持久对象键，再幂等删除临时对象。"""
-        if not temporary_key or not persistent_key:
-            raise ValueError("媒体对象键不能为空")
+        self._validate_key(temporary_key)
+        self._validate_key(persistent_key)
         try:
             try:
                 self._client.head_object(Bucket=self._bucket, Key=persistent_key)
-            except Exception:
+            except Exception as exc:
+                if not _s3_not_found(exc):
+                    raise
                 self._client.copy_object(
                     Bucket=self._bucket,
                     CopySource={"Bucket": self._bucket, "Key": temporary_key},
@@ -217,3 +289,37 @@ class S3CompatibleMediaObjects:
             self._client.delete_object(Bucket=self._bucket, Key=temporary_key)
         except Exception as exc:
             raise MediaObjectPromotionFailed(temporary_key) from exc
+
+    @staticmethod
+    def _validate_key(object_key: str) -> None:
+        """Reject empty or control-character object keys before client calls."""
+        if not object_key or any(ord(character) < 0x20 for character in object_key):
+            raise ValueError("媒体对象键不能为空且不能包含控制字符")
+
+
+def _s3_not_found(error: Exception) -> bool:
+    """Recognize common S3-compatible 404 shapes without importing a client SDK."""
+    if isinstance(error, FileNotFoundError):
+        return True
+    response = getattr(error, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if status_code == 404:
+        return True
+    if isinstance(response, Mapping):
+        error_code = response.get("Error", {}).get("Code") if isinstance(response.get("Error"), Mapping) else None
+        if str(error_code) in {"404", "NoSuchKey", "NotFound"}:
+            return True
+    return getattr(error, "status_code", None) == 404
+
+
+def _s3_metadata(response: object) -> Mapping[str, str]:
+    metadata = response.get("Metadata", {}) if isinstance(response, Mapping) else getattr(response, "Metadata", {})
+    return metadata if isinstance(metadata, Mapping) else {}
+
+
+def _s3_size(response: object) -> int | None:
+    value = response.get("ContentLength") if isinstance(response, Mapping) else getattr(response, "ContentLength", None)
+    try:
+        return None if value is None else int(value)
+    except (TypeError, ValueError):
+        return None
