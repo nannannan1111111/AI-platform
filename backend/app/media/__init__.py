@@ -38,7 +38,9 @@ from app.media.objects import (
     MediaObjectConflict,
     MediaObjectDeletionFailed,
     MediaObjectPromotionFailed,
+    MediaObjectReadFailed,
     MediaObjects,
+    MediaObjectWriteFailed,
     S3CompatibleMediaObjects,
     StoredMediaObject,
 )
@@ -66,6 +68,8 @@ __all__ = [
     "MediaContentStore",
     "MediaObjectDeletionFailed",
     "MediaObjectPromotionFailed",
+    "MediaObjectReadFailed",
+    "MediaObjectWriteFailed",
     "MediaObjects",
     "MAX_STORAGE_ALLOWANCE_BYTES",
     "AccountStorageAllowancePolicy",

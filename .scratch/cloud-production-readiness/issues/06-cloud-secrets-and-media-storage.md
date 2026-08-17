@@ -1,7 +1,7 @@
 # 06 云密钥与媒体存储策略
 
 Type: task
-Status: open
+Status: claimed
 Stage: 云端落地
 Blocked by: 02, 05
 
@@ -56,3 +56,8 @@ Blocked by: 02, 05
 
 ## Comments
 
+### 2026-08-18 仓库侧先行实现
+
+- 补齐 `S3CompatibleMediaObjects` 的 `put_temporary`、`read`、`delete`、`promote` 全生命周期契约，使用稳定对象键、内容哈希元数据和幂等冲突检测。
+- 对对象存储非 404 的 `HEAD` 故障不再误判为“对象不存在”而执行复制，避免网络故障导致错误晋升；新增读取/写入失败类型和控制字符键校验。
+- 新增 S3 兼容 Adapter 定向测试；真实 COS 兼容性、私有桶、KMS、IAM 和生产装配仍需腾讯云环境验收，工单保持 `claimed`。
