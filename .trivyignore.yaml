@@ -1,0 +1,4 @@
+# Exceptions are deny-by-default. Every entry must include a bounded path or
+# package scope, an impact statement, an expiry date, and an accountable owner
+# in the approving pull request. See docs/supply-chain-security.md.
+vulnerabilities: []
