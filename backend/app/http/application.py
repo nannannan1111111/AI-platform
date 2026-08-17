@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import logging
 import re
 import struct
 import zipfile
@@ -44,6 +45,14 @@ from app.assets import (
     PersonalAssetRename,
     PersonalAssets,
     PersonalAssetSave,
+)
+from app.auth_abuse import (
+    AuthAbusePolicies,
+    AuthAbuseProtection,
+    AuthAction,
+    ClientIpResolver,
+    RateLimitBackendUnavailable,
+    RateLimitSubject,
 )
 from app.canvases import (
     CanvasCreation,
@@ -210,6 +219,8 @@ _WORKFLOW_MAX_MANIFEST_BYTES = 1024 * 1024
 _WORKFLOW_MAX_IMAGE_BYTES = 50 * 1024 * 1024
 _WORKFLOW_MAX_COMPRESSION_RATIO = 200
 _WORKFLOW_COMPRESSION_RATIO_MIN_BYTES = 1024 * 1024
+_LOG = logging.getLogger(__name__)
+_REGISTRATION_ACCEPTED = {"detail": "注册请求已受理；若邮箱可用，验证邮件将发送到该地址"}
 _WORKFLOW_MEDIA_URL_KEYS = {
     "url",
     "path",
@@ -549,6 +560,57 @@ def _bearer_token(authorization: str | None) -> str:
     return token
 
 
+def _enforce_auth_limit(
+    protection: AuthAbuseProtection | None,
+    action: AuthAction,
+    subjects: tuple[RateLimitSubject, ...],
+) -> None:
+    if protection is None:
+        return
+    try:
+        decision = protection.consume(action, subjects)
+    except RateLimitBackendUnavailable as exc:
+        _LOG.error("authentication rate-limit backend unavailable", extra={"security_event": "auth_limit_error"})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="认证保护服务暂时不可用，请稍后重试",
+        ) from exc
+    if decision.allowed:
+        return
+    _LOG.warning(
+        "authentication request rate limited",
+        extra={
+            "security_event": "auth_rate_limited",
+            "auth_action": action.value,
+            "blocked_scopes": decision.blocked_scopes,
+            "retry_after_seconds": decision.retry_after_seconds,
+        },
+    )
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="请求过于频繁，请稍后重试",
+        headers={"Retry-After": str(decision.retry_after_seconds)},
+    )
+
+
+def _reset_auth_limit(
+    protection: AuthAbuseProtection | None,
+    action: AuthAction,
+    scope: str,
+    subject_value: str,
+) -> None:
+    if protection is None:
+        return
+    try:
+        protection.reset(action, scope, subject_value)
+    except RateLimitBackendUnavailable as exc:
+        _LOG.error("authentication rate-limit backend unavailable", extra={"security_event": "auth_limit_error"})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="认证保护服务暂时不可用，请稍后重试",
+        ) from exc
+
+
 def _canvas_media_ids(value: object) -> tuple[str, ...]:
     """读取画布文档显式声明的规范媒体标识字段。"""
     found: set[str] = set()
@@ -804,37 +866,64 @@ def create_app(
     admin_authorizer: Callable[[str], None] | None = None,
     payment_notification_verifier: Callable[[str, str], None] | None = None,
     chargeback_notification_verifier: Callable[[str, str], None] | None = None,
+    auth_abuse_protection: AuthAbuseProtection | None = None,
+    auth_abuse_policies: AuthAbusePolicies | None = None,
+    client_ip_resolver: ClientIpResolver | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> FastAPI:
     """创建只依赖账户 Interface 的 FastAPI 应用。"""
     app = FastAPI(title="乐云工坊 SaaS")
+    abuse_policies = auth_abuse_policies or AuthAbusePolicies.defaults()
+    resolve_client_ip = client_ip_resolver or ClientIpResolver()
+    app.state.auth_abuse_protection = auth_abuse_protection
 
     @app.get("/healthz", include_in_schema=False)
     def health_check() -> dict[str, str]:
         """Report that the HTTP process is ready to receive requests."""
         return {"status": "ok"}
 
-    @app.post("/api/v1/auth/register", status_code=status.HTTP_201_CREATED)
-    def register(credentials: _Credentials) -> dict[str, str]:
+    @app.post("/api/v1/auth/register", status_code=status.HTTP_202_ACCEPTED)
+    def register(credentials: _Credentials, request: Request) -> dict[str, str]:
+        _enforce_auth_limit(
+            auth_abuse_protection,
+            AuthAction.REGISTER,
+            (
+                RateLimitSubject("ip", resolve_client_ip(request), abuse_policies.register_ip),
+            ),
+        )
         try:
-            return asdict(accounts.register(credentials.email, credentials.password))
-        except EmailAlreadyRegistered as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="邮箱已注册") from exc
+            accounts.register(credentials.email, credentials.password)
+        except EmailAlreadyRegistered:
+            return dict(_REGISTRATION_ACCEPTED)
         except InvalidEmail as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="邮箱格式无效") from exc
         except WeakPassword as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="密码至少需要 12 个字符"
             ) from exc
-        except EmailDeliveryFailed as exc:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="验证邮件发送失败，请稍后重试") from exc
+        except EmailDeliveryFailed:
+            _LOG.error(
+                "registration verification delivery failed",
+                extra={"security_event": "registration_delivery_failed"},
+            )
+        return dict(_REGISTRATION_ACCEPTED)
 
     @app.post("/api/v1/auth/login")
-    def login(credentials: _Credentials) -> dict[str, str]:
+    def login(credentials: _Credentials, request: Request) -> dict[str, str]:
+        normalized_email = credentials.email.strip().casefold()
+        _enforce_auth_limit(
+            auth_abuse_protection,
+            AuthAction.LOGIN,
+            (
+                RateLimitSubject("email", normalized_email, abuse_policies.login_email),
+                RateLimitSubject("ip", resolve_client_ip(request), abuse_policies.login_ip),
+            ),
+        )
         try:
             session = accounts.login(credentials.email, credentials.password)
         except (InvalidCredentials, KeyError) as exc:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="邮箱或密码错误") from exc
+        _reset_auth_limit(auth_abuse_protection, AuthAction.LOGIN, "email", normalized_email)
         return {"access_token": session.access_token, "token_type": "bearer"}
 
     @app.get("/api/v1/auth/me")
@@ -978,6 +1067,18 @@ def create_app(
     def request_email_verification(authorization: Annotated[str | None, Header()] = None) -> None:
         token = _bearer_token(authorization)
         try:
+            current = accounts.current_user(token)
+            _enforce_auth_limit(
+                auth_abuse_protection,
+                AuthAction.EMAIL_VERIFICATION,
+                (
+                    RateLimitSubject(
+                        "account",
+                        current.user_id,
+                        abuse_policies.email_verification_account,
+                    ),
+                ),
+            )
             accounts.request_email_verification(token)
         except InvalidSession as exc:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录已失效") from exc

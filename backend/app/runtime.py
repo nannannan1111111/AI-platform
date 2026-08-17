@@ -20,6 +20,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.account_generation_limits import SqlAlchemyAccountGenerationLimits
 from app.accounts import AccountAccess, InvalidSession, SqlAlchemyAccountAccess
 from app.assets import SqlAlchemyPersonalAssets
+from app.auth_abuse import (
+    AuthAbusePolicies,
+    ClientIpResolver,
+    RateLimitPolicy,
+    SqlAlchemyAuthAbuseProtection,
+)
 from app.canvases import SqlAlchemyCanvases
 from app.credits import SqlAlchemyCredits, SqlAlchemyModelPrices
 from app.database_runtime import configure_postgresql_engine, postgres_advisory_lock
@@ -73,6 +79,9 @@ class ProductionSettings:
     database_pool_timeout_seconds: float
     generation_submission_mode: str
     generation_worker_deployed_limit: int
+    auth_rate_limit_hash_key: str
+    auth_abuse_policies: AuthAbusePolicies
+    trusted_proxy_cidrs: tuple[str, ...]
 
     @classmethod
     def from_environ(cls, environ: Mapping[str, str] | None = None) -> ProductionSettings:
@@ -127,6 +136,35 @@ class ProductionSettings:
         if generation_submission_mode not in {"queued", "inline"}:
             raise ProductionConfigurationError("GENERATION_SUBMISSION_MODE must be queued or inline")
 
+        auth_rate_limit_hash_key = values.get("AUTH_RATE_LIMIT_HASH_KEY", "").strip()
+        if len(auth_rate_limit_hash_key.encode("utf-8")) < 32:
+            raise ProductionConfigurationError("AUTH_RATE_LIMIT_HASH_KEY must contain at least 32 bytes")
+        trusted_proxy_cidrs = tuple(
+            value.strip() for value in values.get("TRUSTED_PROXY_CIDRS", "").split(",") if value.strip()
+        )
+        try:
+            ClientIpResolver(trusted_proxy_cidrs)
+        except ValueError as exc:
+            raise ProductionConfigurationError("TRUSTED_PROXY_CIDRS must contain valid IP networks") from exc
+        auth_abuse_policies = AuthAbusePolicies(
+            login_ip=RateLimitPolicy(
+                _positive_int(values, "AUTH_LOGIN_IP_LIMIT", 10),
+                timedelta(seconds=_positive_int(values, "AUTH_LOGIN_WINDOW_SECONDS", 600)),
+            ),
+            login_email=RateLimitPolicy(
+                _positive_int(values, "AUTH_LOGIN_EMAIL_LIMIT", 5),
+                timedelta(seconds=_positive_int(values, "AUTH_LOGIN_WINDOW_SECONDS", 600)),
+            ),
+            register_ip=RateLimitPolicy(
+                _positive_int(values, "AUTH_REGISTER_IP_LIMIT", 5),
+                timedelta(seconds=_positive_int(values, "AUTH_REGISTER_WINDOW_SECONDS", 3600)),
+            ),
+            email_verification_account=RateLimitPolicy(
+                _positive_int(values, "AUTH_EMAIL_VERIFICATION_ACCOUNT_LIMIT", 3),
+                timedelta(seconds=_positive_int(values, "AUTH_EMAIL_VERIFICATION_WINDOW_SECONDS", 3600)),
+            ),
+        )
+
         return cls(
             database_url=database_url,
             generated_media_root=generated_media_root,
@@ -138,6 +176,9 @@ class ProductionSettings:
             database_pool_timeout_seconds=database_pool_timeout_seconds,
             generation_submission_mode=generation_submission_mode,
             generation_worker_deployed_limit=_positive_int(values, "GENERATION_WORKER_DEPLOYED_LIMIT", 4),
+            auth_rate_limit_hash_key=auth_rate_limit_hash_key,
+            auth_abuse_policies=auth_abuse_policies,
+            trusted_proxy_cidrs=trusted_proxy_cidrs,
         )
 
 
@@ -377,6 +418,10 @@ def _compose_application(
         credit_accounting=credits,
     )
     epay_payments = SqlAlchemyEpayPayments(sessions, provider_secrets)
+    auth_abuse_protection = SqlAlchemyAuthAbuseProtection(
+        sessions,
+        hash_key=settings.auth_rate_limit_hash_key,
+    )
 
     app = create_app(
         accounts,
@@ -410,6 +455,9 @@ def _compose_application(
         email_settings=email_settings,
         platform_content=platform_content,
         admin_authorizer=account_admin_authorizer(accounts, settings.platform_admin_emails),
+        auth_abuse_protection=auth_abuse_protection,
+        auth_abuse_policies=settings.auth_abuse_policies,
+        client_ip_resolver=ClientIpResolver(settings.trusted_proxy_cidrs),
     )
     app.state.generation_tasks = generation_tasks
     app.state.generation_attempt_submissions = generation_attempt_submissions

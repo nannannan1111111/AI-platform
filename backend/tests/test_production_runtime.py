@@ -84,6 +84,7 @@ def test_production_settings_parse_explicit_deployment_values(tmp_path: Path) ->
             "PROVIDER_SECRETS_ROOT": str(provider_secrets_root),
             "PLATFORM_ADMIN_EMAILS": " Admin@Example.com,ops@example.com ",
             "MAX_ACTIVE_GENERATION_TASKS": "7",
+            "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
         }
     )
 
@@ -97,6 +98,9 @@ def test_production_settings_parse_explicit_deployment_values(tmp_path: Path) ->
     assert settings.database_pool_timeout_seconds == 10
     assert settings.generation_submission_mode == "queued"
     assert settings.generation_worker_deployed_limit == 4
+    assert settings.auth_abuse_policies.login_ip.limit == 10
+    assert settings.auth_abuse_policies.login_email.limit == 5
+    assert settings.trusted_proxy_cidrs == ()
 
 
 def test_production_settings_default_to_twenty_active_image_units(tmp_path: Path) -> None:
@@ -106,6 +110,7 @@ def test_production_settings_default_to_twenty_active_image_units(tmp_path: Path
             "GENERATED_MEDIA_ROOT": str(tmp_path),
             "PROVIDER_SECRETS_ROOT": str(tmp_path / "provider-secrets"),
             "PLATFORM_ADMIN_EMAILS": "admin@example.com",
+            "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
         }
     )
 
@@ -124,6 +129,7 @@ def test_production_settings_parse_capacity_controls(tmp_path: Path) -> None:
             "DATABASE_POOL_TIMEOUT_SECONDS": "4.5",
             "GENERATION_SUBMISSION_MODE": "inline",
             "GENERATION_WORKER_DEPLOYED_LIMIT": "8",
+            "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
         }
     )
 
@@ -149,6 +155,7 @@ def test_production_settings_reject_invalid_capacity_controls(tmp_path: Path, na
         "GENERATED_MEDIA_ROOT": str(tmp_path),
         "PROVIDER_SECRETS_ROOT": str(tmp_path / "provider-secrets"),
         "PLATFORM_ADMIN_EMAILS": "admin@example.com",
+        "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
         name: value,
     }
     with pytest.raises(ProductionConfigurationError, match=name):
@@ -165,8 +172,37 @@ def test_production_settings_reject_invalid_generation_limit(tmp_path: Path, con
                 "PROVIDER_SECRETS_ROOT": str(tmp_path / "provider-secrets"),
                 "PLATFORM_ADMIN_EMAILS": "admin@example.com",
                 "MAX_ACTIVE_GENERATION_TASKS": configured,
+                "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
             }
         )
+
+
+def test_production_settings_require_a_stable_auth_rate_limit_hash_key(tmp_path: Path) -> None:
+    with pytest.raises(ProductionConfigurationError, match="AUTH_RATE_LIMIT_HASH_KEY"):
+        ProductionSettings.from_environ(
+            {
+                "DATABASE_URL": "postgresql+psycopg://example.invalid/app",
+                "GENERATED_MEDIA_ROOT": str(tmp_path),
+                "PROVIDER_SECRETS_ROOT": str(tmp_path / "provider-secrets"),
+                "PLATFORM_ADMIN_EMAILS": "admin@example.com",
+                "AUTH_RATE_LIMIT_HASH_KEY": "too-short",
+            }
+        )
+
+
+def test_production_settings_validate_trusted_proxy_networks(tmp_path: Path) -> None:
+    base = {
+        "DATABASE_URL": "postgresql+psycopg://example.invalid/app",
+        "GENERATED_MEDIA_ROOT": str(tmp_path),
+        "PROVIDER_SECRETS_ROOT": str(tmp_path / "provider-secrets"),
+        "PLATFORM_ADMIN_EMAILS": "admin@example.com",
+        "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
+    }
+
+    settings = ProductionSettings.from_environ({**base, "TRUSTED_PROXY_CIDRS": "127.0.0.1/32, 10.0.0.0/8"})
+    assert settings.trusted_proxy_cidrs == ("127.0.0.1/32", "10.0.0.0/8")
+    with pytest.raises(ProductionConfigurationError, match="TRUSTED_PROXY_CIDRS"):
+        ProductionSettings.from_environ({**base, "TRUSTED_PROXY_CIDRS": "not-a-network"})
 
 
 def test_admin_authorizer_uses_authenticated_account_email_allowlist() -> None:
@@ -263,6 +299,7 @@ def test_production_app_wires_provider_management_and_generation_submission(tmp_
             "GENERATED_MEDIA_ROOT": str(media_root),
             "PROVIDER_SECRETS_ROOT": str(provider_secrets_root),
             "PLATFORM_ADMIN_EMAILS": "admin@example.com",
+            "AUTH_RATE_LIMIT_HASH_KEY": "test-auth-rate-limit-hash-key-0001",
         }
     )
 

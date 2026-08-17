@@ -118,3 +118,7 @@ Blocked by: 01
 - 远端供应链运行 [31991272283](https://github.com/nannannan1111111/AI-platform/actions/runs/31991272283) 全绿，最终 `supply-chain-gate` 成功；证据制品 `supply-chain-evidence-8ff5af30823d68425979e326dbc9ca8d9c6a6192` 包含 SBOM 和 SARIF 漏洞报告。
 - 普通 `main` 提交按设计跳过 `publish-signed-image`，没有创建版本标签或向 GHCR 发布镜像。
 - 由于测试发布授权仍未明确，尚未验证真实 GHCR digest、BuildKit provenance 与 Cosign OIDC 签名；加上私有仓库套餐无法强制 `supply-chain-gate`，工单继续保持 `claimed`。
+
+### 2026-08-17 发布决策
+
+- 用户明确决定仓库继续保持私有，并暂不创建 `v0.1.0-rc.1` 或发布 GHCR 测试镜像。后续若恢复发布验证，必须重新取得明确授权。

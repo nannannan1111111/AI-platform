@@ -32,6 +32,9 @@ def test_production_compose_mounts_media_and_runs_migrations_separately() -> Non
     assert "service_completed_successfully" in compose
     assert "CREATIVE_STUDIO_RUNTIME_DIR" not in compose
     assert "DATABASE_POOL_SIZE" in compose
+    assert "AUTH_RATE_LIMIT_HASH_KEY" in compose
+    assert "AUTH_LOGIN_EMAIL_LIMIT" in compose
+    assert "TRUSTED_PROXY_CIDRS" in compose
     assert "GENERATION_SUBMISSION_MODE: queued" in compose
 
 
@@ -85,6 +88,12 @@ def test_production_environment_example_matches_the_supported_defaults() -> None
     assert "MAX_ACTIVE_GENERATION_TASKS=20" in environment_example
     assert "WORKER_DATABASE_POOL_SIZE=2" in environment_example
     assert "WORKER_DATABASE_MAX_OVERFLOW=1" in environment_example
+    assert "AUTH_RATE_LIMIT_HASH_KEY=" in environment_example
+    assert "AUTH_LOGIN_IP_LIMIT=10" in environment_example
+    assert "AUTH_LOGIN_EMAIL_LIMIT=5" in environment_example
+    assert "AUTH_REGISTER_IP_LIMIT=5" in environment_example
+    assert "AUTH_EMAIL_VERIFICATION_ACCOUNT_LIMIT=3" in environment_example
+    assert "TRUSTED_PROXY_CIDRS=" in environment_example
     assert "PUBLIC_BASE_URL" not in environment_example
     assert "SMTP_PASSWORD" not in environment_example
     assert "CREATIVE_STUDIO_PORT=2020" not in environment_example

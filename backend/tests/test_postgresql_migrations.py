@@ -1,13 +1,17 @@
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from alembic.config import Config
+from sqlalchemy import create_engine, text
 
 from alembic import command
 from app.accounts import InvalidEmailVerification, InvalidSession, SqlAlchemyAccountAccess
 from app.assets import PersonalAssetSave, SqlAlchemyPersonalAssets
+from app.auth_abuse import AuthAction, RateLimitPolicy, RateLimitSubject, SqlAlchemyAuthAbuseProtection
 from app.canvases import CanvasCreation, CanvasSave, SqlAlchemyCanvases
 from app.credits import SqlAlchemyCredits, SqlAlchemyModelPrices
 from app.generation import (
@@ -633,3 +637,39 @@ def test_postgresql_account_session_and_email_verification_security_flows() -> N
         restarted.current_user(second_session.access_token)
     with pytest.raises(InvalidSession):
         restarted.credit_balance(second_session.access_token)
+
+
+def test_postgresql_auth_rate_limit_is_atomic_across_adapter_instances() -> None:
+    database_url = os.getenv("POSTGRES_TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("POSTGRES_TEST_DATABASE_URL is not configured")
+    now = datetime(2026, 8, 17, 12, 0, tzinfo=UTC)
+    hash_key = "postgres-auth-rate-limit-test-key-0001"
+    subject_value = f"concurrent-{uuid4()}@example.com"
+    adapters = (
+        SqlAlchemyAuthAbuseProtection.for_database_url(database_url, hash_key=hash_key, clock=lambda: now),
+        SqlAlchemyAuthAbuseProtection.for_database_url(database_url, hash_key=hash_key, clock=lambda: now),
+    )
+    subjects = (RateLimitSubject("email", subject_value, RateLimitPolicy(5, timedelta(minutes=10))),)
+
+    def consume(index: int) -> bool:
+        return adapters[index % len(adapters)].consume(AuthAction.LOGIN, subjects).allowed
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        allowed = list(executor.map(consume, range(20)))
+
+    assert allowed.count(True) == 5
+    assert allowed.count(False) == 15
+    with create_engine(database_url).connect() as connection:
+        stored_hash = connection.execute(
+            text(
+                "SELECT subject_hash FROM auth_rate_limit_windows "
+                "WHERE action = 'login' AND subject_scope = 'email' "
+                "ORDER BY last_seen_at DESC LIMIT 1"
+            )
+        ).scalar_one()
+    assert stored_hash != subject_value
+    assert len(stored_hash) == 64
+
+    adapters[1].reset(AuthAction.LOGIN, "email", subject_value)
+    assert adapters[0].consume(AuthAction.LOGIN, subjects).allowed is True

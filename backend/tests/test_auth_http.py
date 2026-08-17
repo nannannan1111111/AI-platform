@@ -19,9 +19,10 @@ def test_register_login_current_user_and_balance_flow() -> None:
         "/api/v1/auth/register",
         json={"email": "Artist@Example.COM", "password": "a-correct-horse-battery-staple"},
     )
-    assert registration_response.status_code == 201
-    registration = registration_response.json()
-    assert registration["email"] == "artist@example.com"
+    assert registration_response.status_code == 202
+    assert registration_response.json() == {
+        "detail": "注册请求已受理；若邮箱可用，验证邮件将发送到该地址"
+    }
 
     login_response = client.post(
         "/api/v1/auth/login",
@@ -33,12 +34,11 @@ def test_register_login_current_user_and_balance_flow() -> None:
 
     current_user_response = client.get("/api/v1/auth/me", headers=headers)
     assert current_user_response.status_code == 200
-    assert current_user_response.json() == {
-        "user_id": registration["user_id"],
-        "account_space_id": registration["account_space_id"],
-        "email": "artist@example.com",
-        "email_verified": False,
-    }
+    current_user = current_user_response.json()
+    assert current_user["user_id"]
+    assert current_user["account_space_id"]
+    assert current_user["email"] == "artist@example.com"
+    assert current_user["email_verified"] is False
 
     balance_response = client.get("/api/v1/credits/balance", headers=headers)
     assert balance_response.status_code == 200

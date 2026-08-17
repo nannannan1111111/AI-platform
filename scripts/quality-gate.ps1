@@ -117,6 +117,7 @@ function Invoke-ProductionContract {
             PLATFORM_ADMIN_EMAILS = $env:PLATFORM_ADMIN_EMAILS
             GENERATED_MEDIA_HOST_PATH = $env:GENERATED_MEDIA_HOST_PATH
             PROVIDER_SECRETS_HOST_PATH = $env:PROVIDER_SECRETS_HOST_PATH
+            AUTH_RATE_LIMIT_HASH_KEY = $env:AUTH_RATE_LIMIT_HASH_KEY
         }
         try {
             $env:CREATIVE_STUDIO_IMAGE = "creative-studio:quality-gate"
@@ -124,6 +125,7 @@ function Invoke-ProductionContract {
             $env:PLATFORM_ADMIN_EMAILS = "quality-gate@example.com"
             $env:GENERATED_MEDIA_HOST_PATH = "/tmp/creative-studio/generated-media"
             $env:PROVIDER_SECRETS_HOST_PATH = "/tmp/creative-studio/provider-secrets"
+            $env:AUTH_RATE_LIMIT_HASH_KEY = "quality-gate-auth-rate-limit-key-0001"
             Invoke-Checked docker compose -f deploy/compose.production.yml config --quiet
         }
         finally {

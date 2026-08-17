@@ -8,6 +8,7 @@ from sqlalchemy.engine import Connection
 
 from alembic import context
 from app.accounts._sqlalchemy import _Base
+from app.auth_abuse import _sqlalchemy as _auth_abuse_sqlalchemy  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:
