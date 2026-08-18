@@ -73,14 +73,14 @@ async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("base_url", help="staging origin, for example https://staging.example.com")
     parser.add_argument("--timeout", type=float, default=10.0)
-    parser.add_argument("--email", default=os.getenv("STAGING_TEST_EMAIL"))
-    parser.add_argument("--password", default=os.getenv("STAGING_TEST_PASSWORD"))
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("timeout must be positive")
     limits = httpx.Limits(max_connections=4, max_keepalive_connections=4)
+    email = os.getenv("STAGING_TEST_EMAIL")
+    password = os.getenv("STAGING_TEST_PASSWORD")
     async with httpx.AsyncClient(timeout=args.timeout, limits=limits, follow_redirects=False) as client:
-        results = await run_smoke(client, args.base_url, email=args.email, password=args.password)
+        results = await run_smoke(client, args.base_url, email=email, password=password)
     for result in results:
         print(json.dumps(asdict(result), ensure_ascii=False, separators=(",", ":")))
     return 0 if all(result.ok for result in results) else 1
