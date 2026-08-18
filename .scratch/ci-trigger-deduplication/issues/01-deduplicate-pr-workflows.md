@@ -1,7 +1,7 @@
 # 01 消除 PR 分支重复流水线
 
 Type: task
-Status: claimed
+Status: resolved
 
 ## 目标
 
@@ -49,3 +49,16 @@ Status: claimed
 - `main` push、`v*` 标签发布和手工触发合同仍受测试保护。
 
 ## Comments
+
+### 2026-08-18 完成
+
+- PR #18 的提交 `8bc1abd` 确认产生 4 条重复运行：`push` 事件 32130389815、32130390033，以及 `pull_request` 事件 32130415060、32130415058。
+- `quality-gate` 和 `supply-chain` 的普通分支 `push` 已限定为 `main`；PR、手工执行和 `v*` 标签发布路径保留。
+- 推送功能分支提交 `acd75af` 后、创建 PR 前，GitHub Actions 查询结果为零条运行。
+- 创建 PR #19 后，同一提交只产生 `pull_request` 事件的 `quality-gate` 32133793039 和 `supply-chain` 32133793047，没有同 SHA 的 `push` 运行。
+- 两条远端工作流全部通过：PostgreSQL 17、Ruff、严格 MyPy、前端构建、production-contract、SBOM/Trivy、`release-gate` 和 `supply-chain-gate` 均成功；非标签发布 Job 正确跳过。
+- 本地触发合同测试 12 项通过，完整回归 631 项通过、5 项跳过；Ruff、严格 MyPy（142 个源文件）和 `git diff --check` 通过。
+
+## Answer
+
+PR 功能分支不再同时执行 `push` 与 `pull_request` 两套流水线。分支保护依赖的检查名称未改变，`main` 合并后验证、手工验证和 `v*` 标签签名发布合同均保留。
