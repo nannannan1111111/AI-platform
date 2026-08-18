@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -120,6 +121,7 @@ def test_backup_verify_cli_publishes_failure_metric(tmp_path: Path) -> None:
         cwd=Path(__file__).parents[1],
         capture_output=True,
         check=False,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[1])},
         text=True,
     )
 
