@@ -1,7 +1,7 @@
 # 11 容量复验、灰度发布与回滚
 
 Type: task
-Status: open
+Status: claimed
 Stage: 收费发布
 Blocked by: 10
 
@@ -57,3 +57,8 @@ Blocked by: 10
 
 ## Comments
 
+### 2026-08-18 仓库侧先行实现
+
+- 新增发布合同校验：生产镜像必须是不可变 digest，回滚默认要求迁移 head 相同，拒绝未经审批的 schema 不兼容回滚。
+- 新增非敏感发布状态快照，记录镜像 digest、迁移 head 和时间；脚本不会执行流量切换或数据库 downgrade。
+- 该合同只生成非敏感状态快照，不执行流量切换、数据库 downgrade 或真实回滚；生产灰度仍需任务 10 和腾讯云环境。

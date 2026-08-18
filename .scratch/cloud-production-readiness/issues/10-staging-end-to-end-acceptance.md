@@ -1,7 +1,7 @@
 # 10 预发布端到端验收
 
 Type: task
-Status: open
+Status: claimed
 Stage: 收费发布
 Blocked by: 06, 07, 08, 09
 
@@ -52,3 +52,8 @@ Blocked by: 06, 07, 08, 09
 
 ## Comments
 
+### 2026-08-18 仓库侧先行实现
+
+- 新增依赖轻量的预发布冒烟脚本，默认只探测 `/healthz`、`/readyz`、模型目录和支付方式目录；测试账号通过环境变量提供，不把密码写入命令行或验收附件。
+- 登录成功后只验证会话和 `/auth/me` 状态，不保存响应体、Token 或用户图片；支付、Provider、SMTP 和恢复后复验继续作为人工验收项。
+- 真实 Provider、SMTP、支付沙箱和恢复后复验仍需预发布资源，工单保持 `claimed`。
