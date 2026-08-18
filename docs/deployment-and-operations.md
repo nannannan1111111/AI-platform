@@ -230,6 +230,28 @@ cd backend
 python scripts/capacity_smoke.py https://studio.example.com/readyz --concurrency 100 --requests 1000
 ```
 
+预发布可以先执行仓库内的无破坏冒烟检查；测试账号只通过环境变量传入，脚本只输出状态码、路径和错误类型：
+
+```bash
+cd backend
+export STAGING_TEST_EMAIL="staging-test@example.com"
+export STAGING_TEST_PASSWORD="<从 Secret Manager 注入，不写入脚本>"
+python scripts/staging_smoke.py https://staging.example.com
+```
+
+发布或回滚前先校验不可变镜像和迁移兼容性，并保存非敏感状态快照：
+
+```bash
+python scripts/release_contract.py \
+  --image ghcr.io/example/ai-platform@sha256:<64-hex-digest> \
+  --migration-head 0061_password_reset_tokens \
+  --previous-image ghcr.io/example/ai-platform@sha256:<previous-64-hex-digest> \
+  --previous-migration-head 0061_password_reset_tokens \
+  --snapshot /secure-deploy/release-state.json
+```
+
+迁移 head 不一致时，脚本默认拒绝回滚；只有完成独立审批并提供 `--approval-reference` 后，才允许显式标记 schema 不兼容回滚。脚本不会切换流量、执行数据库 downgrade 或修改云资源。
+
 验收时要求失败数为 0，并记录 p95、p99 和 RPS 作为该机器规格的基线。随后使用测试账号对登录、画布保存、任务提交和任务列表分别压测；Provider 生成吞吐应单独按“每分钟完成任务数”验证，不能用 `/readyz` 的 HTTP RPS 代替。
 
 2026-08-12 在 4 个 Web 进程、4 个生成 Worker 和 PostgreSQL `max_connections=100` 的本机 Docker 环境实测：100 并发、1000 次 `/readyz` 请求为 0 失败，约 139 RPS，p95 约 2.16 秒，p99 约 3.51 秒；探针期间数据库观测到 42 条总连接。此数据仅作为该机器和 Docker Desktop 环境的起步基线，不代表 Provider 生图吞吐或公网端到端 SLA。
