@@ -7,10 +7,13 @@ import argparse
 import asyncio
 import json
 import os
+import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
 import httpx
+
+_SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +25,13 @@ class ProbeResult:
     expected: tuple[int, ...]
     ok: bool
     detail: str = ""
+    request_id: str = ""
+
+
+def safe_request_id(response: httpx.Response) -> str:
+    """Return only a bounded, log-safe correlation identifier."""
+    request_id = response.headers.get("x-request-id", "").strip()
+    return request_id if _SAFE_REQUEST_ID.fullmatch(request_id) else ""
 
 
 async def run_smoke(
@@ -42,7 +52,16 @@ async def run_smoke(
             results.append(ProbeResult(path, 0, expected, False, type(exc).__name__))
             return None
         ok = response.status_code in expected
-        results.append(ProbeResult(path, response.status_code, expected, ok, "" if ok else "unexpected status"))
+        results.append(
+            ProbeResult(
+                path,
+                response.status_code,
+                expected,
+                ok,
+                "" if ok else "unexpected status",
+                safe_request_id(response),
+            )
+        )
         return response
 
     await probe("/healthz", (200,))
