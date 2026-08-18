@@ -8,7 +8,7 @@
 
 ## 发布质量门禁
 
-GitHub Actions 工作流 `.github/workflows/quality-gate.yml` 在 push、Pull Request 和手工触发时运行四组并行检查，并由固定名称 `release-gate` 汇总：
+GitHub Actions 工作流 `.github/workflows/quality-gate.yml` 在 Pull Request、`main` 分支 push 和手工触发时运行四组并行检查，并由固定名称 `release-gate` 汇总。普通功能分支 push 不单独运行，创建或更新 Pull Request 后由 PR 事件执行同一套门禁，避免同一提交重复测试：
 
 | 门禁 | 检查内容 |
 | --- | --- |
@@ -27,7 +27,7 @@ $env:POSTGRES_TEST_DATABASE_URL = "postgresql+psycopg://user:password@127.0.0.1:
 
 也可以把 `Scope` 设为 `backend-quality`、`backend-tests`、`frontend` 或 `production` 单独排查。前端产物漂移依赖 Git 元数据；不含 `.git` 的源码快照会给出警告，而 CI 中缺少 Git 元数据会失败。
 
-仓库管理员必须把 `release-gate` 设置为默认分支的必需状态检查，禁止直接 push 和管理员绕过，并要求 Pull Request 审批。当前工作流只验证提交且不登录镜像仓库、不推送镜像；带版本标签的签名发布流程在供应链任务完成后单独启用。
+仓库管理员必须把 `release-gate` 设置为默认分支的必需状态检查，禁止直接 push 和管理员绕过，并要求 Pull Request 审批。供应链工作流使用相同的 PR/`main` 触发边界，并额外保留 `v*` 标签路径；普通提交只验证且不登录镜像仓库、不推送镜像，只有版本标签通过供应链门禁后才签名发布。
 
 紧急绕过只能由生产负责人和另一名审批人共同批准，并在变更单记录原因、风险、提交 SHA、执行人、时间和回滚点。绕过后必须在 24 小时内补跑全量 `release-gate` 并关闭审计记录；不得通过修改或删除工作流规避失败检查。
 

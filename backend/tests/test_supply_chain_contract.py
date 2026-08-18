@@ -94,6 +94,21 @@ def test_supply_chain_workflow_generates_evidence_blocks_vulnerabilities_and_sig
     assert all(re.fullmatch(r"[0-9a-f]{40}", reference) for reference in action_references)
 
 
+def test_supply_chain_runs_for_pull_requests_main_pushes_tags_and_manual_dispatch_only() -> None:
+    workflow = _read(".github/workflows/supply-chain.yml")
+
+    assert """on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+""" in workflow
+    assert '      - "**"' not in workflow
+
+
 def test_dependency_updates_and_expiring_vulnerability_exceptions_are_configured() -> None:
     dependabot = _read(".github/dependabot.yml")
     exceptions = _read(".trivyignore.yaml")
