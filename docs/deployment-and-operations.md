@@ -242,6 +242,7 @@ python scripts/staging_smoke.py https://staging.example.com
 发布或回滚前先校验不可变镜像和迁移兼容性，并保存非敏感状态快照：
 
 ```bash
+python scripts/migration_contract.py alembic/versions --expected 0061_password_reset_tokens
 python scripts/release_contract.py \
   --image ghcr.io/example/ai-platform@sha256:<64-hex-digest> \
   --migration-head 0061_password_reset_tokens \
