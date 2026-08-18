@@ -595,6 +595,23 @@ def test_postgresql_sqlalchemy_account_credit_pricing_and_generation_flows() -> 
     failed_result = restarted_tasks.transition(registration.account_space_id, failed.task_id, failure)
     assert failed_result.status.value == "failed"
     assert restarted_tasks.transition(registration.account_space_id, failed.task_id, failure) == failed_result
+    assert restarted_tasks.clear_history(
+        registration.account_space_id,
+        cleared_at=now + timedelta(minutes=2),
+    ) == 2
+    assert restarted_tasks.recent_for_account(registration.account_space_id, limit=20) == ()
+    assert restarted_tasks.recent_for_canvas(
+        registration.account_space_id,
+        postgres_canvas.canvas_id,
+        limit=20,
+    ) == ()
+    assert restarted_tasks.get(registration.account_space_id, submitted.task_id).status.value == "succeeded"
+    assert restarted_tasks.get(registration.account_space_id, failed.task_id) == failed_result
+    assert restarted_tasks.activity_summary(registration.account_space_id, since=None).total_tasks == 2
+    assert restarted_tasks.clear_history(
+        registration.account_space_id,
+        cleared_at=now + timedelta(minutes=3),
+    ) == 0
 
 
 def test_postgresql_account_session_and_email_verification_security_flows() -> None:

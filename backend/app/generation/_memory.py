@@ -51,6 +51,7 @@ class InMemoryGenerationTasks:
         self._max_active_tasks = max_active_tasks
         self._deadline = deadline
         self._tasks_by_key: dict[tuple[str, str], GenerationTask] = {}
+        self._history_hidden_at_by_key: dict[tuple[str, str], datetime] = {}
         self._lock = RLock()
 
     def submit(self, submission: GenerationSubmission) -> GenerationTask:
@@ -271,7 +272,9 @@ class InMemoryGenerationTasks:
             matching = (
                 task
                 for task in self._tasks_by_key.values()
-                if task.account_space_id == account_space_id and task.canvas_id == canvas_id
+                if task.account_space_id == account_space_id
+                and task.canvas_id == canvas_id
+                and (task.account_space_id, task.task_id) not in self._history_hidden_at_by_key
             )
             return tuple(sorted(matching, key=lambda task: (task.created_at, task.task_id), reverse=True)[:limit])
 
@@ -285,8 +288,26 @@ class InMemoryGenerationTasks:
         if limit <= 0:
             raise ValueError("recent generation task limit must be positive")
         with self._lock:
-            matching = (task for task in self._tasks_by_key.values() if task.account_space_id == account_space_id)
+            matching = (
+                task
+                for task in self._tasks_by_key.values()
+                if task.account_space_id == account_space_id
+                and (task.account_space_id, task.task_id) not in self._history_hidden_at_by_key
+            )
             return tuple(sorted(matching, key=lambda task: (task.created_at, task.task_id), reverse=True)[:limit])
+
+    def clear_history(self, account_space_id: str, *, cleared_at: datetime) -> int:
+        """Hide terminal tasks from user-facing history without deleting their facts."""
+        with self._lock:
+            keys = tuple(
+                key
+                for key, task in self._tasks_by_key.items()
+                if task.account_space_id == account_space_id
+                and task.status.is_terminal
+                and key not in self._history_hidden_at_by_key
+            )
+            self._history_hidden_at_by_key.update({key: cleared_at for key in keys})
+            return len(keys)
 
     def activity_summary(
         self,

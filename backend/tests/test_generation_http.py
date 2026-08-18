@@ -181,7 +181,7 @@ def test_top_level_generation_submission_does_not_require_a_canvas() -> None:
     assert '"status":"failed"' in event_body
 
 
-def _rolled_back_test_clear_generation_history_is_account_scoped_and_keeps_active_tasks() -> None:
+def test_clear_generation_history_is_account_scoped_and_keeps_active_tasks() -> None:
     now = datetime(2026, 8, 13, 10, 0, tzinfo=UTC)
     accounts = InMemoryAccountAccess(clock=lambda: now)
     first = accounts.register("clear-history-first@example.com", "a-correct-horse-battery-staple")
@@ -245,6 +245,7 @@ def _rolled_back_test_clear_generation_history_is_account_scoped_and_keeps_activ
     assert [item["task_id"] for item in first_recent.json()] == ["first-active"]
     assert [item["task_id"] for item in second_recent.json()] == ["second-terminal"]
     assert client.get("/api/v1/generation-tasks/first-terminal", headers=first_headers).status_code == 200
+    assert tasks.activity_summary(first.account_space_id, since=None).total_tasks == 2
     assert client.delete("/api/v1/generation-tasks/history", headers=first_headers).json() == {
         "cleared_tasks": 0
     }

@@ -3452,6 +3452,22 @@ def create_app(
                 )
             ]
 
+        @app.delete("/api/v1/generation-tasks/history")
+        def clear_account_generation_history(
+            authorization: Annotated[str | None, Header()] = None,
+        ) -> dict[str, int]:
+            token = _bearer_token(authorization)
+            try:
+                current = accounts.current_user(token)
+            except InvalidSession as exc:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录已失效") from exc
+            return {
+                "cleared_tasks": generation_tasks.clear_history(
+                    current.account_space_id,
+                    cleared_at=(clock or (lambda: datetime.now(UTC)))(),
+                )
+            }
+
         if generation_attempt_submissions is not None or generation_submission_deferred:
 
             @app.post("/api/v1/generation-tasks/{task_id}/retry")

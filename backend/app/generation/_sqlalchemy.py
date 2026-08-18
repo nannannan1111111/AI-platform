@@ -87,6 +87,7 @@ _generation_tasks = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Column("started_at", DateTime(timezone=True), nullable=True),
+    Column("history_hidden_at", DateTime(timezone=True), nullable=True),
 )
 _generation_capacity = Table(
     "generation_worker_capacity",
@@ -328,6 +329,7 @@ class SqlAlchemyGenerationTasks:
                 .where(
                     _generation_tasks.c.account_space_id == account_space_id,
                     _generation_tasks.c.canvas_id == canvas_id,
+                    _generation_tasks.c.history_hidden_at.is_(None),
                 )
                 .order_by(_generation_tasks.c.created_at.desc(), _generation_tasks.c.id.desc())
                 .limit(limit)
@@ -345,11 +347,29 @@ class SqlAlchemyGenerationTasks:
         with self._session_factory() as database:
             rows = database.execute(
                 select(_generation_tasks)
-                .where(_generation_tasks.c.account_space_id == account_space_id)
+                .where(
+                    _generation_tasks.c.account_space_id == account_space_id,
+                    _generation_tasks.c.history_hidden_at.is_(None),
+                )
                 .order_by(_generation_tasks.c.created_at.desc(), _generation_tasks.c.id.desc())
                 .limit(limit)
             ).mappings()
             return tuple(_task_from_row(row) for row in rows)
+
+    def clear_history(self, account_space_id: str, *, cleared_at: datetime) -> int:
+        """Hide terminal tasks from user-facing history without deleting their facts."""
+        with self._session_factory.begin() as database:
+            hidden_task_ids = database.scalars(
+                update(_generation_tasks)
+                .where(
+                    _generation_tasks.c.account_space_id == account_space_id,
+                    _generation_tasks.c.status.in_(("succeeded", "failed", "cancelled")),
+                    _generation_tasks.c.history_hidden_at.is_(None),
+                )
+                .values(history_hidden_at=cleared_at)
+                .returning(_generation_tasks.c.id)
+            )
+            return len(tuple(hidden_task_ids))
 
     def activity_summary(
         self,
