@@ -29,6 +29,7 @@ from app.auth_abuse import (
 )
 from app.canvases import SqlAlchemyCanvases
 from app.credits import SqlAlchemyCredits, SqlAlchemyModelPrices
+from app.database_metrics import install_database_pool_metrics
 from app.database_runtime import configure_postgresql_engine, postgres_advisory_lock
 from app.email_settings import SqlAlchemyEmailSettings
 from app.generation import GenerationDeadlineScheduler, SqlAlchemyGenerationTasks
@@ -500,6 +501,7 @@ def _compose_application(
         ),
         metrics_token=settings.metrics_token,
     )
+    install_database_pool_metrics(engine)
     app.state.generation_tasks = generation_tasks
     app.state.generation_attempt_submissions = generation_attempt_submissions
     app.state.worker_capacity = worker_capacity
