@@ -12,10 +12,12 @@ import hmac
 import json
 import logging
 import re
+import shutil
 import time
 import uuid
 from collections import defaultdict
 from collections.abc import Mapping
+from pathlib import Path
 from threading import Lock
 
 from fastapi import Request
@@ -209,6 +211,26 @@ class MetricsRegistry:
 METRICS = MetricsRegistry()
 
 
+def collect_media_storage_metrics(
+    root: Path,
+    *,
+    metrics: MetricsRegistry = METRICS,
+) -> None:
+    """Record filesystem capacity without exposing the configured host path."""
+    try:
+        usage = shutil.disk_usage(root)
+    except OSError:
+        metrics.set("media_storage_probe_success", 0)
+        metrics.set("media_storage_total_bytes", 0)
+        metrics.set("media_storage_used_bytes", 0)
+        metrics.set("media_storage_available_bytes", 0)
+        return
+    metrics.set("media_storage_probe_success", 1)
+    metrics.set("media_storage_total_bytes", float(usage.total))
+    metrics.set("media_storage_used_bytes", float(usage.used))
+    metrics.set("media_storage_available_bytes", float(usage.free))
+
+
 class RequestObservabilityMiddleware:
     """Attach a request ID and record coarse HTTP latency/status metrics."""
 
@@ -252,7 +274,13 @@ class RequestObservabilityMiddleware:
             )
 
 
-def metrics_response(request: Request, *, token: str | None, metrics: MetricsRegistry = METRICS) -> PlainTextResponse:
+def metrics_response(
+    request: Request,
+    *,
+    token: str | None,
+    metrics: MetricsRegistry = METRICS,
+    media_storage_root: Path | None = None,
+) -> PlainTextResponse:
     """Return a protected Prometheus scrape response."""
     if not token:
         return PlainTextResponse("not found\n", status_code=404)
@@ -262,4 +290,6 @@ def metrics_response(request: Request, *, token: str | None, metrics: MetricsReg
         provided = authorization[7:].strip()
     if not hmac.compare_digest(provided, token):
         return PlainTextResponse("unauthorized\n", status_code=401, headers={"WWW-Authenticate": "Bearer"})
+    if media_storage_root is not None:
+        collect_media_storage_metrics(media_storage_root, metrics=metrics)
     return PlainTextResponse(metrics.render(), media_type="text/plain; version=0.0.4; charset=utf-8")

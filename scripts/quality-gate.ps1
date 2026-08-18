@@ -129,6 +129,11 @@ function Invoke-ProductionContract {
             $env:AUTH_RATE_LIMIT_HASH_KEY = "quality-gate-auth-rate-limit-key-0001"
             $env:ALLOWED_HOSTS = "quality-gate.example.com"
             Invoke-Checked docker compose -f deploy/compose.production.yml config --quiet
+            Invoke-Checked docker run --rm `
+                --volume "${RepositoryRoot}/deploy/monitoring:/rules:ro" `
+                --entrypoint /bin/promtool `
+                "prom/prometheus:v3.5.0@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996" `
+                check rules /rules/storage-backup-alerts.yml
         }
         finally {
             foreach ($Name in $PreviousEnvironment.Keys) {

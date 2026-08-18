@@ -15,7 +15,7 @@ GitHub Actions 工作流 `.github/workflows/quality-gate.yml` 在 push、Pull Re
 | `backend-quality` | Ruff 与严格 MyPy |
 | `backend-tests` | 在 PostgreSQL 17 上运行完整 Pytest；未提供测试数据库连接串时直接失败 |
 | `frontend-quality` | `npm ci`、Vue 类型检查、生产构建以及已提交 `admin-vue` 产物漂移检查 |
-| `production-contract` | Alembic 单 head、Production Compose 解析和生产 Docker 镜像构建 |
+| `production-contract` | Alembic 单 head、Production Compose 解析、Prometheus 告警规则语法和生产 Docker 镜像构建 |
 | `release-gate` | 仅当以上四项全部成功时通过；它是分支保护唯一稳定的必需检查名 |
 
 本地可从仓库根目录复用同一个脚本。完整校验必须显式提供隔离的 PostgreSQL 测试库，脚本不会静默跳过数据库测试：
@@ -158,7 +158,9 @@ curl -fsS http://127.0.0.1:8000/readyz
 
 应用为每个 HTTP 请求接受或生成安全的 `x-request-id`，并在响应中回传。Prometheus 兼容指标位于 `/metrics`；只有设置至少 16 个字符的 `METRICS_TOKEN` 后才开放，抓取时使用 `Authorization: Bearer <token>` 或 `X-Metrics-Token`。未配置令牌时该路径返回 404，避免把未保护的指标端点暴露到公网。
 
-当前仓库侧指标包括 HTTP 请求计数/延迟、数据库连接池建立/借出/归还/当前占用、生成 Worker 心跳、最后成功领取时间、在途任务数、队列最老任务年龄和任务处理结果。Worker 使用 JSON 日志格式；字段采用 allowlist，Bearer、Cookie、API Key、数据库连接串、密码、完整提示词和图片内容会被脱敏。云端仍需把这些指标接入腾讯云监控或 Prometheus，并为以下持续窗口配置告警：5 分钟 HTTP 5xx > 2%、数据库池等待/耗尽、Worker 心跳超过 2 分钟未更新、队列最老任务超过 10 分钟、媒体盘使用率 > 80%、备份成功时间超过 26 小时。每条告警应链接相应 Runbook，并验证恢复通知。
+当前仓库侧指标包括 HTTP 请求计数/延迟、数据库连接池建立/借出/归还/当前占用、生成 Worker 心跳、最后成功领取时间、在途任务数、队列最老任务年龄、任务处理结果，以及媒体卷总量/已用量/可用量/探测状态。媒体容量只在通过鉴权的 `/metrics` 抓取时刷新，不把宿主机或容器路径写入标签。Worker 使用 JSON 日志格式；字段采用 allowlist，Bearer、Cookie、API Key、数据库连接串、密码、完整提示词和图片内容会被脱敏。
+
+仓库提供 `deploy/monitoring/storage-backup-alerts.yml` 告警模板和 `docs/runbooks/storage-and-backup-alerts.md` 处置手册。云端仍需把应用指标接入腾讯云监控或 Prometheus，并为以下持续窗口配置告警：5 分钟 HTTP 5xx > 2%、数据库池等待/耗尽、Worker 心跳超过 2 分钟未更新、队列最老任务超过 10 分钟、媒体盘使用率 > 80%、备份成功时间超过 26 小时。每条告警都必须在预发布验证触发和恢复通知。
 
 ## 备份与恢复
 
@@ -182,19 +184,23 @@ python scripts/backup_manifest.py create \
   --migration-head 0061_password_reset_tokens \
   --config-version <git-commit> \
   --file database=/secure-backups/database.dump
-python scripts/backup_manifest.py verify /secure-backups/recovery-point.json
+python scripts/backup_manifest.py verify /secure-backups/recovery-point.json \
+  --metrics-file /var/lib/node_exporter/textfile_collector/infinite-canvas-backup.prom
 ```
 
 隔离恢复时不要直接信任 manifest 中原主机路径，可把恢复后的文件显式映射到隔离目录再校验：
 
 ```bash
 python scripts/backup_manifest.py verify /secure-backups/recovery-point.json \
+  --metrics-file /var/lib/node_exporter/textfile_collector/infinite-canvas-backup.prom \
   --file database=/srv/isolated/database.dump \
   --file media=/srv/isolated/media.snapshot \
   --file secrets=/srv/isolated/secrets.snapshot
 ```
 
-该工具只负责 manifest、SHA-256 和本地文件校验，不会替代 TencentDB PITR、COS 快照、KMS 加密或隔离环境恢复演练；这些仍需云端凭据和真实资源后验收。
+`--metrics-file` 使用 Prometheus node_exporter textfile collector 格式原子写入三个非敏感指标：最新已验证恢复点的创建时间、最近校验时间和最近校验完整性。校验失败时完整性变为 `0`，并保留上一次成功时间，避免失败任务把陈旧备份伪装成新成功。目录必须由备份任务可写且 node_exporter 可读；指标文件不包含快照 ID、文件路径或密钥。若未部署 node_exporter，可由腾讯云采集 Agent 读取同一文本指标。
+
+该工具只负责 manifest、SHA-256、本地文件校验和指标落盘，不会替代 TencentDB PITR、COS 快照、KMS 加密或隔离环境恢复演练；这些仍需云端凭据和真实资源后验收。每日恢复点超过 26 小时的规则也不能证明建议的 15 分钟 RPO，真实环境还必须单独监控 TencentDB PITR 连续性。
 
 数据库、媒体目录与 Provider 密钥目录必须成对恢复。只恢复数据库会留下缺失图片和不可读 Provider 引用，只恢复目录会失去账户归属与引用关系。所有备份都应加密并限制访问；不要把数据库密码、会话、支付凭据或 Provider Key 写入普通日志或仓库。
 

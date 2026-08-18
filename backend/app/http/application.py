@@ -14,7 +14,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from tempfile import TemporaryFile
 from typing import Annotated
 from urllib.parse import parse_qsl, unquote
@@ -891,6 +891,7 @@ def create_app(
     client_ip_resolver: ClientIpResolver | None = None,
     http_security: HttpSecuritySettings | None = None,
     metrics_token: str | None = None,
+    media_storage_root: Path | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> FastAPI:
     """创建只依赖账户 Interface 的 FastAPI 应用。"""
@@ -909,7 +910,12 @@ def create_app(
     @app.get("/metrics", include_in_schema=False)
     def metrics(request: Request) -> PlainTextResponse:
         """Expose Prometheus metrics only to the explicitly configured scraper."""
-        return metrics_response(request, token=metrics_token, metrics=METRICS)
+        return metrics_response(
+            request,
+            token=metrics_token,
+            metrics=METRICS,
+            media_storage_root=media_storage_root,
+        )
 
     @app.post("/api/v1/auth/register", status_code=status.HTTP_202_ACCEPTED)
     def register(credentials: _Credentials, request: Request) -> dict[str, str]:
