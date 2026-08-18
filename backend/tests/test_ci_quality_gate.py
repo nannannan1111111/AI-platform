@@ -20,6 +20,19 @@ def test_github_workflow_has_fixed_parallel_jobs_and_a_final_gate() -> None:
     assert "permissions:\n  contents: read" in workflow
 
 
+def test_quality_gate_runs_for_pull_requests_main_pushes_and_manual_dispatch_only() -> None:
+    workflow = _read(".github/workflows/quality-gate.yml")
+
+    assert """on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+""" in workflow
+    assert '      - "**"' not in workflow
+
+
 def test_backend_ci_uses_postgresql_17_without_optional_database_tests() -> None:
     workflow = _read(".github/workflows/quality-gate.yml")
     script = _read("scripts/quality-gate.ps1")
