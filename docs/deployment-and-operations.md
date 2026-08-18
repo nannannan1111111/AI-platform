@@ -245,6 +245,16 @@ export STAGING_TEST_PASSWORD="<从 Secret Manager 注入，不写入脚本>"
 python scripts/staging_smoke.py https://staging.example.com
 ```
 
+完整预发布验收使用带显式状态变更保护的矩阵脚本。默认仍只执行只读基线；取消任务、支付通知重放和媒体清理必须逐场景选择并提供 `--allow-state-change`。输入、人工触发步骤、脱敏证据和清理边界见 `docs/runbooks/staging-acceptance.md`：
+
+```bash
+python scripts/staging_acceptance.py https://staging.example.com \
+  --scenario baseline \
+  --evidence staging-baseline.jsonl
+```
+
+证据文件不能包含 Token、密钥、提示词、图片、业务标识或内部路径。超时与迟到结果由真实 Worker 和 Provider 沙箱触发，脚本只核验最终权威状态，不能代替真实依赖验收。
+
 发布或回滚前先校验不可变镜像和迁移兼容性，并保存非敏感状态快照：
 
 ```bash
