@@ -1,0 +1,10 @@
+{
+  "stage": "internal",
+  "request_count": 100,
+  "error_rate_percent": 0.0,
+  "p95_ms": 500,
+  "queue_oldest_seconds": 0,
+  "database_connections": 60,
+  "provider_completions_per_minute": 1.0,
+  "provider_cost_cny": "1.00"
+}

@@ -1,0 +1,56 @@
+{
+  "capacity": {
+    "web_replicas": 1,
+    "web_concurrency": 4,
+    "web_pool_size": 8,
+    "web_max_overflow": 4,
+    "worker_replicas": 4,
+    "worker_pool_size": 2,
+    "worker_max_overflow": 1,
+    "database_max_connections": 100,
+    "operations_reserve": 20
+  },
+  "rollback": {
+    "maximum_duration_seconds": 600,
+    "worker_grace_seconds": 300,
+    "post_rollback_observation_seconds": 900
+  },
+  "stages": [
+    {
+      "name": "internal",
+      "traffic_percent": 0,
+      "observation_seconds": 600,
+      "minimum_requests": 100,
+      "maximum_error_rate_percent": 1.0,
+      "maximum_p95_ms": 2500,
+      "maximum_queue_oldest_seconds": 600,
+      "maximum_database_connections": 70,
+      "minimum_provider_completions_per_minute": 0.1,
+      "maximum_provider_cost_cny": "10.00"
+    },
+    {
+      "name": "limited",
+      "traffic_percent": 10,
+      "observation_seconds": 1800,
+      "minimum_requests": 1000,
+      "maximum_error_rate_percent": 1.0,
+      "maximum_p95_ms": 2500,
+      "maximum_queue_oldest_seconds": 600,
+      "maximum_database_connections": 75,
+      "minimum_provider_completions_per_minute": 0.5,
+      "maximum_provider_cost_cny": "50.00"
+    },
+    {
+      "name": "full",
+      "traffic_percent": 100,
+      "observation_seconds": 3600,
+      "minimum_requests": 5000,
+      "maximum_error_rate_percent": 1.0,
+      "maximum_p95_ms": 2500,
+      "maximum_queue_oldest_seconds": 600,
+      "maximum_database_connections": 80,
+      "minimum_provider_completions_per_minute": 1.0,
+      "maximum_provider_cost_cny": "200.00"
+    }
+  ]
+}
