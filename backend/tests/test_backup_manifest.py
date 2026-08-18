@@ -1,8 +1,17 @@
+import subprocess
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from app.backup_manifest import BackupManifestError, build_manifest, verify_manifest, write_manifest
+from app.backup_manifest import (
+    BackupManifestError,
+    build_manifest,
+    verify_manifest,
+    write_backup_metrics,
+    write_manifest,
+)
 
 
 def test_backup_manifest_hashes_and_verifies_artifacts(tmp_path: Path) -> None:
@@ -64,3 +73,55 @@ def test_backup_manifest_can_verify_a_mapped_isolated_restore_copy(tmp_path: Pat
 
     with pytest.raises(BackupManifestError, match="unknown backup artifact"):
         verify_manifest(manifest_path, path_overrides={"missing": restored})
+
+
+def test_backup_metrics_preserve_last_success_when_verification_fails(tmp_path: Path) -> None:
+    metrics_path = tmp_path / "backup.prom"
+    write_backup_metrics(
+        metrics_path,
+        recovery_point_created_at="2026-08-18T00:00:00Z",
+        integrity_valid=True,
+        checked_at=datetime(2026, 8, 18, 0, 5, tzinfo=UTC),
+    )
+    write_backup_metrics(
+        metrics_path,
+        recovery_point_created_at=None,
+        integrity_valid=False,
+        checked_at=datetime(2026, 8, 18, 1, 0, tzinfo=UTC),
+    )
+
+    rendered = metrics_path.read_text(encoding="utf-8")
+    assert "backup_last_success_timestamp_seconds 1787011200.000" in rendered
+    assert "backup_last_verification_timestamp_seconds 1787014800.000" in rendered
+    assert "backup_recovery_point_integrity 0" in rendered
+
+
+def test_backup_metrics_reject_naive_recovery_point_timestamps(tmp_path: Path) -> None:
+    with pytest.raises(BackupManifestError, match="timezone"):
+        write_backup_metrics(
+            tmp_path / "backup.prom",
+            recovery_point_created_at="2026-08-18T00:00:00",
+            integrity_valid=True,
+        )
+
+
+def test_backup_verify_cli_publishes_failure_metric(tmp_path: Path) -> None:
+    metrics_path = tmp_path / "backup.prom"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/backup_manifest.py",
+            "verify",
+            str(tmp_path / "missing-manifest.json"),
+            "--metrics-file",
+            str(metrics_path),
+        ],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "backup_recovery_point_integrity 0" in metrics_path.read_text(encoding="utf-8")

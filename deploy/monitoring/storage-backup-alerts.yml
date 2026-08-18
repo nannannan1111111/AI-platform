@@ -1,0 +1,47 @@
+groups:
+  - name: infinite-canvas-storage-and-backup
+    rules:
+      - alert: InfiniteCanvasMediaStorageProbeFailed
+        expr: media_storage_probe_success == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Infinite Canvas media storage cannot be inspected
+          runbook_url: https://github.com/nannannan1111111/AI-platform/blob/main/docs/runbooks/storage-and-backup-alerts.md#media-storage-probe-failed
+
+      - alert: InfiniteCanvasMediaStorageNearlyFull
+        expr: media_storage_total_bytes > 0 and (media_storage_used_bytes / media_storage_total_bytes) > 0.80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Infinite Canvas media storage usage is above 80 percent
+          runbook_url: https://github.com/nannannan1111111/AI-platform/blob/main/docs/runbooks/storage-and-backup-alerts.md#media-storage-nearly-full
+
+      - alert: InfiniteCanvasBackupMetricsMissing
+        expr: absent(backup_last_verification_timestamp_seconds)
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: Infinite Canvas backup verification metrics are missing
+          runbook_url: https://github.com/nannannan1111111/AI-platform/blob/main/docs/runbooks/storage-and-backup-alerts.md#backup-metrics-missing
+
+      - alert: InfiniteCanvasBackupRecoveryPointInvalid
+        expr: backup_recovery_point_integrity == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Infinite Canvas recovery-point integrity verification failed
+          runbook_url: https://github.com/nannannan1111111/AI-platform/blob/main/docs/runbooks/storage-and-backup-alerts.md#backup-recovery-point-invalid
+
+      - alert: InfiniteCanvasBackupRecoveryPointStale
+        expr: backup_last_success_timestamp_seconds == 0 or (time() - backup_last_success_timestamp_seconds) > 93600
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: Infinite Canvas has no verified recovery point newer than 26 hours
+          runbook_url: https://github.com/nannannan1111111/AI-platform/blob/main/docs/runbooks/storage-and-backup-alerts.md#backup-recovery-point-stale

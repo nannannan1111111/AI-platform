@@ -500,6 +500,7 @@ def _compose_application(
             enable_hsts=settings.enable_hsts,
         ),
         metrics_token=settings.metrics_token,
+        media_storage_root=settings.generated_media_root,
     )
     install_database_pool_metrics(engine)
     app.state.generation_tasks = generation_tasks

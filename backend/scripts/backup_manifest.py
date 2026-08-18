@@ -6,7 +6,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from app.backup_manifest import BackupManifestError, build_manifest, verify_manifest, write_manifest
+from app.backup_manifest import (
+    BackupManifestError,
+    build_manifest,
+    read_manifest,
+    verify_manifest,
+    write_backup_metrics,
+    write_manifest,
+)
 
 
 def main() -> int:
@@ -25,6 +32,11 @@ def main() -> int:
     verify = subparsers.add_parser("verify")
     verify.add_argument("manifest", type=Path)
     verify.add_argument("--file", action="append", default=[], metavar="NAME=PATH", help="map an artifact into an isolated restore directory")
+    verify.add_argument(
+        "--metrics-file",
+        type=Path,
+        help="atomically publish verification state for a Prometheus textfile collector",
+    )
     args = parser.parse_args()
     try:
         if args.command == "verify":
@@ -34,7 +46,14 @@ def main() -> int:
                 if not separator or not name or not path or name in overrides:
                     raise BackupManifestError("--file must use each NAME=PATH mapping once")
                 overrides[name] = Path(path)
+            manifest = read_manifest(args.manifest)
             entries = verify_manifest(args.manifest, path_overrides=overrides)
+            if args.metrics_file is not None:
+                write_backup_metrics(
+                    args.metrics_file,
+                    recovery_point_created_at=manifest.created_at,
+                    integrity_valid=True,
+                )
             print(f"verified {len(entries)} backup artifacts")
             return 0
         files: list[tuple[str, Path]] = []
@@ -56,6 +75,12 @@ def main() -> int:
         print(args.output)
         return 0
     except BackupManifestError as exc:
+        if args.command == "verify" and args.metrics_file is not None:
+            write_backup_metrics(
+                args.metrics_file,
+                recovery_point_created_at=None,
+                integrity_valid=False,
+            )
         parser.error(str(exc))
         return 2
 
