@@ -229,12 +229,16 @@ Web 副本数 × WEB_CONCURRENCY × (DATABASE_POOL_SIZE + DATABASE_MAX_OVERFLOW)
 
 当前单机默认值为 `1 × 4 × (8 + 4) + 4 × (2 + 1) = 60` 条应用连接。PostgreSQL 至少还应保留 20% 或 10 条（取较大值）给迁移、备份和人工排障。若数据库 `max_connections` 低于预算，不要直接增加 Web/Worker 数；应先减小池或使用 PgBouncer transaction pooling。
 
-上线前在隔离环境执行 100 并发就绪探针冒烟：
+上线前在隔离环境执行 100 并发就绪探针冒烟，并把错误率、p95 和 RPS 作为自动停止条件：
 
 ```bash
 cd backend
-python scripts/capacity_smoke.py https://studio.example.com/readyz --concurrency 100 --requests 1000
+python scripts/capacity_smoke.py https://studio.example.com/readyz \
+  --concurrency 100 --requests 1000 \
+  --max-failure-rate-percent 0 --max-p95-ms 2500 --min-rps 50 --json
 ```
+
+阈值必须来自已批准容量基线，不能直接照抄示例。连接预算、Provider 吞吐、费用上限、灰度阶段和应用回滚见 `docs/runbooks/capacity-canary-and-rollback.md`。
 
 预发布可以先执行仓库内的无破坏冒烟检查；测试账号只通过环境变量传入，脚本只输出状态码、路径和错误类型：
 
