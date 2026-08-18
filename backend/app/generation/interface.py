@@ -49,6 +49,9 @@ class GenerationTasks(Protocol):
     ) -> tuple[GenerationTask, ...]:
         """按创建时间从新到旧读取账户空间最近任务，包含终态。"""
 
+    def clear_history(self, account_space_id: str, *, cleared_at: datetime) -> int:
+        """从用户历史视图隐藏账户空间内尚未隐藏的终态任务。"""
+
     def activity_summary(
         self,
         account_space_id: str,

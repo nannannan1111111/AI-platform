@@ -2289,9 +2289,10 @@ async function workspaceGenerationsPage() {
       source_label: generationTaskSourceLabel(task, canvasesById),
       results: resultsByTask.get(task.task_id) || [],
     }));
-    shell('生成任务', `<div class="page-head"><div><h1>最近生成任务</h1><p>查看排队、生成及最近完成或失败的任务。</p></div><button class="secondary-btn" type="button" data-generation-refresh>刷新状态</button></div>
+    const hasTerminalTasks = tasks.some(task => ['succeeded', 'failed', 'cancelled'].includes(task.status));
+    shell('生成任务', `<div class="page-head"><div><h1>最近生成任务</h1><p>查看排队、生成及最近完成或失败的任务。</p></div><div class="row-actions"><button class="secondary-btn" type="button" data-generation-clear-history ${hasTerminalTasks ? '' : 'disabled'}>清除已结束记录</button><button class="secondary-btn" type="button" data-generation-refresh>刷新状态</button></div></div>
       ${generationFailureNotice(tasks)}
-      <section class="panel"><div class="section-head" style="margin-top:0"><div><h2>最近任务</h2><p>最近24小时内生成的结果；这里只查看状态和结果，不提供修改或删除。</p></div></div>${recentGenerationTasksTable(tasks)}</section>`, 'generation-history-page');
+      <section class="panel"><div class="section-head" style="margin-top:0"><div><h2>最近任务</h2><p>最近24小时内生成的结果；清除只会隐藏已结束记录，不会删除任务、额度流水或生成图片。</p></div></div>${recentGenerationTasksTable(tasks)}</section>`, 'generation-history-page');
     app.querySelectorAll('[data-generation-view]').forEach(button => button.addEventListener('click', () => {
       const task = tasks.find(item => item.task_id === button.dataset.generationView);
       if (task) openGenerationTaskViewer(task);
@@ -2300,6 +2301,24 @@ async function workspaceGenerationsPage() {
     refreshButton?.addEventListener('click', async () => {
       refreshButton.disabled = true;
       await workspaceGenerationsPage();
+    });
+    const clearButton = app.querySelector('[data-generation-clear-history]');
+    clearButton?.addEventListener('click', async () => {
+      const confirmed = await centeredDeleteConfirm(
+        '只会从最近任务列表隐藏已结束的任务；任务记录、额度流水和生成图片不会被删除。',
+        '清除已结束记录',
+        '确认清除',
+      );
+      if (!confirmed) return;
+      clearButton.disabled = true;
+      try {
+        const result = await api('/api/v1/generation-tasks/history', { method: 'DELETE' });
+        toast(`已清除 ${Number(result.cleared_tasks || 0)} 条已结束记录`);
+        await workspaceGenerationsPage();
+      } catch (error) {
+        toast(error.message);
+        clearButton.disabled = false;
+      }
     });
   } catch (error) {
     if (!state.token) return navigate('/login', { replace: true });

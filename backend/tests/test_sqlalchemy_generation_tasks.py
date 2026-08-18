@@ -623,7 +623,7 @@ def test_sqlalchemy_generation_tasks_expire_twenty_minutes_after_dispatch_restar
     assert tuple(entry.kind for entry in statement.entries).count("release") == 1
 
 
-def _rolled_back_test_sqlalchemy_clear_history_persists_without_deleting_tasks(tmp_path: Path) -> None:
+def test_sqlalchemy_clear_history_persists_without_deleting_tasks(tmp_path: Path) -> None:
     backend_root = Path(__file__).parents[1]
     database_url = f"sqlite+pysqlite:///{(tmp_path / 'generation-history-visibility.db').as_posix()}"
     config = Config(backend_root / "alembic.ini")
@@ -685,4 +685,5 @@ def _rolled_back_test_sqlalchemy_clear_history_persists_without_deleting_tasks(t
         "sql-active"
     ]
     assert restarted.get(registration.account_space_id, "sql-terminal").status is GenerationTaskStatus.FAILED
+    assert restarted.activity_summary(registration.account_space_id, since=None).total_tasks == 2
     assert restarted.clear_history(registration.account_space_id, cleared_at=now + timedelta(minutes=2)) == 0

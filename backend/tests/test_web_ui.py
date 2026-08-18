@@ -2699,7 +2699,7 @@ def test_generation_task_page_refreshes_with_read_only_requests() -> None:
     assert "setInterval" not in script.text
 
 
-def _rolled_back_test_generation_task_page_can_clear_terminal_history_and_uses_wide_layout() -> None:
+def test_generation_task_page_can_clear_terminal_history_and_uses_wide_layout() -> None:
     client = TestClient(create_app(InMemoryAccountAccess()))
 
     script = client.get("/web-assets/app.js").text
@@ -2708,11 +2708,11 @@ def _rolled_back_test_generation_task_page_can_clear_terminal_history_and_uses_w
 
     assert "data-generation-clear-history" in script
     assert "api('/api/v1/generation-tasks/history', { method: 'DELETE' })" in script
-    assert "生成图片也不会被删除" in script
-    assert "'generations-page'" in script
-    assert ".page.generations-page" in styles
-    assert ".generations-page .generation-task-table { overflow: visible; }" in styles
-    assert "queueVersion=user-generation-queue-7" in page
+    assert "任务记录、额度流水和生成图片不会被删除" in script
+    assert "'generation-history-page'" in script
+    assert ".page.generation-history-page" in styles
+    assert ".generation-history-table { overflow: visible; }" in styles
+    assert "queueVersion=user-generation-queue-5" in page
 
 
 def test_generation_task_page_exposes_read_only_view_actions_without_retry_or_delete() -> None:
