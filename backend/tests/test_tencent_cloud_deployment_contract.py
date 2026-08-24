@@ -96,6 +96,7 @@ def test_release_script_opens_https_only_after_all_hard_gates() -> None:
     assert "DATABASE_URL must explicitly require or verify PostgreSQL TLS" in deploy_script
     assert "application readiness failed; Caddy was not changed or enabled" in deploy_script
     assert "systemctl disable --now caddy || true" in deploy_script
+    assert 'DEPLOY_ENV_FILE:-/etc/infinite-canvas/single-host.env' in deploy_script
 
 
 def test_tencent_production_environment_uses_loopback_proxy_and_hsts() -> None:

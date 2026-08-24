@@ -6,7 +6,7 @@ readonly script_dir
 deployment_root="$(cd -- "$script_dir/.." && pwd)"
 readonly deployment_root
 readonly compose_file="${COMPOSE_FILE:-/opt/infinite-canvas/compose.production.yml}"
-readonly environment_file="${DEPLOY_ENV_FILE:-/etc/infinite-canvas/production.env}"
+readonly environment_file="${DEPLOY_ENV_FILE:-/etc/infinite-canvas/single-host.env}"
 readonly caddy_environment_file="${CADDY_ENV_FILE:-/etc/infinite-canvas/caddy.env}"
 readonly caddy_config_file="${CADDY_CONFIG_FILE:-/etc/caddy/Caddyfile}"
 readonly release_directory="${RELEASE_EVIDENCE_DIR:-/srv/infinite-canvas/releases}"

@@ -127,7 +127,7 @@ sudo --preserve-env=COSIGN_CERTIFICATE_IDENTITY_REGEXP,COSIGN_CERTIFICATE_OIDC_I
   <private-tcr>/infinite_canvas/application:<version>
 ```
 
-脚本输出经过再次验签的 TCR 摘要。把它写入 `/etc/infinite-canvas/production.env` 的 `CREATIVE_STUDIO_IMAGE`；该文件权限必须是 `0600`。
+脚本输出经过再次验签的 TCR 摘要。把它写入 `/etc/infinite-canvas/single-host.env` 的 `CREATIVE_STUDIO_IMAGE`；该文件权限必须是 `0600`。
 
 3. 把仓库中的 `compose.production.yml` 放到 `/opt/infinite-canvas/`，把腾讯云 `Caddyfile` 和部署脚本放到同一发布目录。复制 `caddy.env.example` 为 `/etc/infinite-canvas/caddy.env`，权限 `0600`，域名必须与 `ALLOWED_HOSTS` 相同。
 4. 部署脚本按固定次序执行：TCR 摘要验签 → Compose 解析和拉取 → Alembic 迁移 → Web/Worker 启动 → 回环 `/readyz` → Caddy 校验/启用 → 公网 HTTPS `/readyz`。任何前置步骤失败都不会首次开放 Caddy 流量。
@@ -147,7 +147,7 @@ sudo --preserve-env=SITE_DOMAIN,COSIGN_CERTIFICATE_IDENTITY_REGEXP,COSIGN_CERTIF
 ```bash
 deploy/tencent-cloud/scripts/verify-edge.sh studio.example.com <expected-eip>
 ss -lntp
-docker compose --env-file /etc/infinite-canvas/production.env \
+docker compose --env-file /etc/infinite-canvas/single-host.env \
   -f /opt/infinite-canvas/compose.production.yml ps
 ```
 
