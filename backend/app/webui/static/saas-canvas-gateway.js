@@ -117,7 +117,7 @@
     const decoder = new TextDecoder();
     let buffered = '';
     let terminalTask = null;
-    let mediaEventSeen = false;
+    let mediaItemCount = 0;
     try {
       while (true) {
         const { value, done } = await reader.read();
@@ -134,7 +134,7 @@
           if (!data) continue;
           const payload = JSON.parse(data);
           if (eventName === 'media') {
-            mediaEventSeen = true;
+            mediaItemCount += Array.isArray(payload) ? payload.length : 1;
             if (onMedia) await onMedia(payload);
             continue;
           }
@@ -142,7 +142,11 @@
           if (onTask) await onTask(task);
           if (['succeeded', 'failed', 'cancelled'].includes(task.status)) terminalTask = task;
         }
-        if (terminalTask && (terminalTask.status !== 'succeeded' || mediaEventSeen || done)) return terminalTask;
+        if (terminalTask) {
+          if (terminalTask.status !== 'succeeded') return terminalTask;
+          const delivered = Math.max(0, Number(terminalTask.delivered_quantity || 0));
+          if (!delivered || mediaItemCount >= delivered || done) return terminalTask;
+        }
         if (done) throw new Error('任务状态连接提前关闭');
       }
     } finally {

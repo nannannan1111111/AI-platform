@@ -15,16 +15,9 @@
         'togglePreviewCompare', 'toggleQuickToolbar', 'undoEditDrawing', 'undoGridCustomLine'
     ]);
     const selector = '[data-csp-click],[data-csp-dblclick],[data-csp-stop-propagation]';
-    const allowedTargets = new WeakSet(document.querySelectorAll(selector));
+    const allowedTargets = [...document.querySelectorAll(selector)];
 
-    function dispatch(event, attribute){
-        if(!(event.target instanceof Element)) return;
-        const target = event.target.closest(selector);
-        if(!target || !allowedTargets.has(target)) return;
-        if(target.dataset.cspStopPropagation === 'true') {
-            event.stopPropagation();
-            return;
-        }
+    function dispatch(target, event, attribute){
         const action = target.getAttribute(attribute);
         if(!action || !allowedActions.has(action)) return;
         const handler = globalThis[action];
@@ -41,6 +34,16 @@
         handler.apply(target, args);
     }
 
-    document.addEventListener('click', event => dispatch(event, 'data-csp-click'));
-    document.addEventListener('dblclick', event => dispatch(event, 'data-csp-dblclick'));
+    allowedTargets.forEach(target => {
+        if(target.dataset.cspStopPropagation === 'true') {
+            target.addEventListener('click', event => event.stopPropagation());
+            target.addEventListener('dblclick', event => event.stopPropagation());
+        }
+        if(target.hasAttribute('data-csp-click')) {
+            target.addEventListener('click', event => dispatch(target, event, 'data-csp-click'));
+        }
+        if(target.hasAttribute('data-csp-dblclick')) {
+            target.addEventListener('dblclick', event => dispatch(target, event, 'data-csp-dblclick'));
+        }
+    });
 })();

@@ -2135,7 +2135,7 @@ def test_saas_smart_canvas_maps_local_workflow_transfer_to_account_scoped_endpoi
     assert "await restoreCanvasMediaPreviews(workflow)" in gateway.text
     assert "'/api/canvas-workflows/'" not in gateway.text
     assert "ZIP 内图片会持久导入当前画布，并立即占用存储容量" in page.text
-    assert "/web-assets/saas-canvas-gateway.js?v=canvas-generation-delivery-4" in page.text
+    assert "/web-assets/saas-canvas-gateway.js?v=canvas-generation-delivery-5" in page.text
 
 
 def test_saas_canvas_gateway_projects_legacy_config_from_the_safe_model_catalog() -> None:
@@ -2248,7 +2248,7 @@ def test_smart_canvas_restores_generation_log_context() -> None:
     script = client.get("/static/js/smart-canvas.js")
 
     assert page.status_code == 200
-    assert "entryVersion=smart-task-status-1" in page.text
+    assert "entryVersion=smart-task-status-2" in page.text
     assert "rememberSmartPendingLog" in script.text
     assert "restoredSmartPendingLogContext" in script.text
     assert "pendingLogStartedAt" in script.text
@@ -2261,8 +2261,8 @@ def test_canvas_generation_logs_expire_after_24_hours() -> None:
     classic_script = client.get("/static/js/canvas.js")
     smart_script = client.get("/static/js/smart-canvas.js")
 
-    assert "entryVersion=smart-task-status-1" in classic_page.text
-    assert "entryVersion=smart-task-status-1" in smart_page.text
+    assert "entryVersion=smart-task-status-2" in classic_page.text
+    assert "entryVersion=smart-task-status-2" in smart_page.text
     assert "GENERATION_LOG_RETENTION_MS = 24 * 60 * 60 * 1000" in classic_script.text
     assert "SMART_GENERATION_LOG_RETENTION_MS = 24 * 60 * 60 * 1000" in smart_script.text
     assert "pruneGenerationLogs" in classic_script.text
@@ -2723,7 +2723,154 @@ def test_generation_task_page_lists_safe_result_availability_without_content_url
     assert ".generation-viewer-backdrop" in styles.text
     assert ".generation-viewer-grid" in styles.text
     assert "content_url" not in script.text
-    assert "object_key" not in script.text
+
+
+def test_image_workspace_falls_back_to_bounded_polling_when_sse_disconnects() -> None:
+    client = TestClient(create_app(InMemoryAccountAccess()))
+    script = client.get("/web-assets/app.js")
+    harness = r"""
+const assert = require('node:assert/strict');
+const source = require('node:fs').readFileSync(0, 'utf8');
+const start = source.indexOf('async function completeImageSessionEntry');
+const end = source.indexOf('function bindImageSessionActions', start);
+const entry = {taskId:'task-sse-drop', status:'pending', quantity:1, startNumber:1, media:[]};
+const state = {imageTaskObservers:new Set(), user:null};
+let streamCalls = 0;
+let taskReads = 0;
+const streamGenerationTask = async () => { streamCalls += 1; throw new Error('connection dropped'); };
+const api = async path => {
+  if(path === '/api/v1/generation-tasks/task-sse-drop') {
+    taskReads += 1;
+    return {task_id:'task-sse-drop', status:'succeeded', delivered_quantity:1, created_at:'2026-08-24T00:00:00Z'};
+  }
+  if(path === '/api/v1/generation-tasks/task-sse-drop/media') return [{media_id:'media-1'}];
+  if(path === '/api/v1/auth/me') return {user_id:'user-1'};
+  throw new Error(`unexpected request: ${path}`);
+};
+const authenticatedMediaObjectUrl = async media => `blob:${media.media_id}`;
+const renderImageSessionResults = () => {};
+const notices = [];
+const toast = message => notices.push(message);
+global.window = {setTimeout(callback) { callback(); return 1; }};
+eval(source.slice(start, end));
+(async () => {
+  await observeImageSessionTask(entry);
+  assert.equal(streamCalls, 1);
+  assert.equal(taskReads, 1);
+  assert.equal(entry.status, 'succeeded');
+  assert.deepEqual(entry.media.map(item => item.media_id), ['media-1']);
+  assert.deepEqual(notices, ['已生成 1 张图片']);
+})().catch(error => { console.error(error.stack || error); process.exitCode = 1; });
+"""
+
+    result = subprocess.run(
+        ["node", "-e", harness],
+        input=script.text,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_smart_canvas_reconciles_media_after_terminal_sse_event() -> None:
+    client = TestClient(create_app(InMemoryAccountAccess()))
+    smart = client.get("/static/js/smart-canvas.js")
+    harness = r"""
+const assert = require('node:assert/strict');
+const source = require('node:fs').readFileSync(0, 'utf8');
+const start = source.indexOf('async function pollSmartCanvasTask');
+const end = source.indexOf('function finalizeSmartPendingTask', start);
+const activeSmartTaskPolls = new Map();
+const tr = value => value;
+class ImageTaskRecoverSignal extends Error {}
+const delivered = [];
+const terminal = {task_id:'task-terminal-first', status:'succeeded', delivered_quantity:1};
+global.window = {SaaSCanvasGateway: {
+  active:true,
+  async streamGenerationTask(_taskId, onMedia, onTask) {
+    await onMedia([]);
+    await onTask(terminal);
+    return terminal;
+  },
+  async previewMedia(item) { return {...item, url:`blob:${item.media_id}`}; },
+}};
+global.fetch = async path => {
+  if(path === '/api/v1/generation-tasks/task-terminal-first') return new Response(JSON.stringify(terminal), {status:200});
+  if(path === '/api/v1/generation-tasks/task-terminal-first/media') return new Response(JSON.stringify([{media_id:'media-1'}]), {status:200});
+  throw new Error(`unexpected request: ${path}`);
+};
+global.setTimeout = callback => { callback(); return 1; };
+eval(source.slice(start, end));
+(async () => {
+  const result = await pollSmartCanvasTask('task-terminal-first', {onMedia:items => delivered.push(...items)});
+  assert.deepEqual(result.images.map(item => item.media_id), ['media-1']);
+  assert.deepEqual(delivered.map(item => item.media_id), ['media-1']);
+})().catch(error => { console.error(error.stack || error); process.exitCode = 1; });
+"""
+
+    result = subprocess.run(
+        ["node", "-e", harness],
+        input=smart.text,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_csp_bridge_binds_actions_directly_inside_propagation_boundaries() -> None:
+    client = TestClient(create_app(InMemoryAccountAccess()))
+    bridge = client.get("/static/js/csp-event-bridge.js")
+    harness = r"""
+const assert = require('node:assert/strict');
+const source = require('node:fs').readFileSync(0, 'utf8');
+function element(attributes, dataset={}) {
+  return {
+    dataset,
+    listeners:{},
+    getAttribute(name) { return attributes[name] || null; },
+    hasAttribute(name) { return Object.hasOwn(attributes, name); },
+    addEventListener(name, handler) { (this.listeners[name] ||= []).push(handler); },
+  };
+}
+const closeButton = element({'data-csp-click':'closeSmartWorkflowTransferModal'});
+const boundary = element({}, {cspStopPropagation:'true'});
+global.document = {querySelectorAll() { return [closeButton, boundary]; }};
+let closed = 0;
+global.closeSmartWorkflowTransferModal = () => { closed += 1; };
+eval(source);
+let stopped = 0;
+closeButton.listeners.click[0]({stopPropagation() { stopped += 1; }});
+boundary.listeners.click[0]({stopPropagation() { stopped += 1; }});
+assert.equal(closed, 1);
+assert.equal(stopped, 1);
+"""
+
+    result = subprocess.run(
+        ["node", "-e", harness],
+        input=bridge.text,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_canvas_creation_form_is_smart_only_without_a_kind_selector() -> None:
+    client = TestClient(create_app(InMemoryAccountAccess()))
+    script = client.get("/web-assets/app.js").text
+
+    assert 'id="canvas-kind"' not in script
+    assert "canvas-kind-hint" not in script
+    assert "kind: 'smart'" in script
+    assert "object_key" not in script
 
 
 def test_generation_task_page_refreshes_with_read_only_requests() -> None:

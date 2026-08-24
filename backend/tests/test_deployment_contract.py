@@ -56,14 +56,14 @@ def test_capacity_budget_preserves_database_operations_reserve() -> None:
 
     validate_capacity_budget(capacity)
 
-    assert capacity.application_connections == 60
-    assert capacity.minimum_operations_reserve == 12
+    assert capacity.application_connections == 64
+    assert capacity.minimum_operations_reserve == 13
     assert capacity.application_connection_ceiling == 80
 
     with pytest.raises(DeploymentContractError, match="operations_reserve"):
-        validate_capacity_budget(_capacity(operations_reserve=11))
-    with pytest.raises(DeploymentContractError, match="at least 80"):
-        validate_capacity_budget(_capacity(database_max_connections=79))
+        validate_capacity_budget(_capacity(operations_reserve=12))
+    with pytest.raises(DeploymentContractError, match="at least 84"):
+        validate_capacity_budget(_capacity(database_max_connections=83))
 
 
 def test_deployment_contract_requires_monotonic_canary_and_compatible_rollback() -> None:
@@ -134,7 +134,7 @@ def test_deployment_snapshot_contains_only_reproducible_release_state(tmp_path: 
     )
 
     payload = json.loads(destination.read_text(encoding="utf-8"))
-    assert snapshot.application_connections == 60
+    assert snapshot.application_connections == 64
     assert payload["stage_names"] == ["internal", "limited", "full"]
     assert payload["rollback_maximum_duration_seconds"] == 600
     assert "approval_reference" not in payload

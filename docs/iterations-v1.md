@@ -45,3 +45,15 @@
 - 使用单机发布脚本切换 Web 与 10 个 Generation Worker，镜像摘要一致。
 - 数据库迁移保持 `0065_merge_v17_redeem_concurrency`；回环与公网健康/就绪检查通过。
 - V26 摘要 `sha256:22e90333d05683b378bf5b0766b26ad44bc4ae025df3bfb2f7afb92122c02427` 已保留为回滚镜像。
+
+## V1.0.8 / V28 候选（未部署）
+
+- 直接基于 V27 工作源码 HEAD `0437942` 叠加修改，未从旧目录、旧 ZIP、V17、干净 `main` 或其他 worktree 覆盖。
+- 生产日志确认 Provider 已 HTTP 200 返回并完成结果解析；Worker 在登记 GeneratedMedia/更新任务终态时因业务 `QueuePool size 2 + overflow 1` 被长期 advisory lock 连接耗尽而超时。
+- Worker ordinal lock 和任务 dispatch lock 改用独立 `NullPool` engine，并在每个 Worker 内复用一个 AUTOCOMMIT 锁会话；进程内 key 集合阻止 PostgreSQL 会话级锁的可重入槽位复用。业务任务和媒体持久化继续使用有界业务池，生产最坏应用连接预算为 88，低于 `max_connections=120`。
+- 图片页和智能画布成功后统一通过任务/媒体 API 收敛，SSE 断开时对同一 task ID 做有界退避轮询，并按媒体 ID/result reference/URL 去重；不会重提 Provider 或触发额外账务动作。
+- 新建画布不再显示“智能画布”只读选择框和说明，创建仍固定为 smart；classic 历史数据与旧地址兼容保留。
+- CSP 事件桥改为白名单静态元素直接绑定，修复弹窗 `stopPropagation()` 阻断工作流、关闭等按钮事件的问题。
+- 验证结果：后端 `641 passed, 5 skipped, 21 warnings`；生成链定向 `141 passed`；连接池/Worker/交付定向 `72 passed`；Web UI/SSE/恢复 `97 passed`；JavaScript/Python 语法、前端生产构建与 `git diff --check` 通过。
+- 真实浏览器验证覆盖创建/返回、工作流导入导出、上传、编辑工具、下载、缩放/适应视图、节点选择/拖动/Delete 删除及其他现有工具栏；console 无 error/warn。因本地无已发布模型和额度，未发起付费生图，生成链由自动化覆盖且未对生产写入。
+- 建议标签 `v1.0.8`，建议镜像 `creative-studio:single-host-candidate-v28`；当前生产继续运行 V27，本次未部署、未迁移数据库、未重启生产服务。

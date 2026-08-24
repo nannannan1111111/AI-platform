@@ -819,7 +819,7 @@ async function streamGenerationTask(taskId, onMedia = null, onTask = null) {
   const decoder = new TextDecoder();
   let buffered = '';
   let terminalTask = null;
-  let mediaEventSeen = false;
+  let mediaItemCount = 0;
   try {
     while (true) {
       const { value, done } = await reader.read();
@@ -836,7 +836,7 @@ async function streamGenerationTask(taskId, onMedia = null, onTask = null) {
         if (!data) continue;
         const payload = JSON.parse(data);
         if (eventName === 'media') {
-          mediaEventSeen = true;
+          mediaItemCount += Array.isArray(payload) ? payload.length : 1;
           if (onMedia) await onMedia(payload);
           continue;
         }
@@ -844,7 +844,11 @@ async function streamGenerationTask(taskId, onMedia = null, onTask = null) {
         if (onTask) await onTask(task);
         if (['succeeded', 'failed', 'cancelled'].includes(task.status)) terminalTask = task;
       }
-      if (terminalTask && (terminalTask.status !== 'succeeded' || mediaEventSeen || done)) return terminalTask;
+      if (terminalTask) {
+        if (terminalTask.status !== 'succeeded') return terminalTask;
+        const delivered = Math.max(0, Number(terminalTask.delivered_quantity || 0));
+        if (!delivered || mediaItemCount >= delivered || done) return terminalTask;
+      }
       if (done) throw new Error('任务状态连接提前关闭');
     }
   } finally {
@@ -1037,7 +1041,7 @@ function canvasEditorUrl(canvasId, kind) {
 function canvasWorkspaceContent(canvases, previews = new Map()) {
   return `<div class="page-head"><div><h1>无限画布</h1><p>在可缩放画布中组织图片、提示词和生成节点。画布与媒体仅属于当前账户空间。</p></div></div>
     <section class="panel"><div class="section-head" style="margin-top:0"><div><h2>新建画布</h2><p>首版开放图片、提示词、循环、平台生图和输出节点；其他本地 Provider 能力暂不开放。</p></div></div>
-      <form class="canvas-create-form" id="canvas-create-form"><div class="field canvas-title-field"><label for="canvas-title">画布名称</label><input id="canvas-title" name="title" maxlength="80" required placeholder="例如：夏季主视觉"></div><div class="field canvas-kind-field"><label for="canvas-kind">画布类型</label><input id="canvas-kind" type="text" value="智能画布" readonly aria-describedby="canvas-kind-hint"><small id="canvas-kind-hint" class="image-edit-sub">历史画布数据继续保留，不提供旧编辑器入口。</small></div><button class="primary-btn" type="submit">创建并打开</button></form>
+      <form class="canvas-create-form" id="canvas-create-form"><div class="field canvas-title-field"><label for="canvas-title">画布名称</label><input id="canvas-title" name="title" maxlength="80" required placeholder="例如：夏季主视觉"></div><button class="primary-btn" type="submit">创建并打开</button></form>
     </section>
     <section class="panel"><div class="section-head" style="margin-top:0"><div><h2>我的画布</h2><p>保存采用版本校验，避免不同浏览器窗口静默覆盖彼此的修改。</p></div><button class="secondary-btn" type="button" data-canvas-refresh>刷新</button></div>${canvasesTable(canvases, previews)}</section>`;
 }
@@ -2022,14 +2026,16 @@ function bindImageMaskEditor() {
 }
 
 async function completeImageSessionEntry(entry, task) {
-  if ((entry.media || []).length < Number(task.delivered_quantity || entry.quantity || 0)) {
-    const media = await api(`/api/v1/generation-tasks/${encodeURIComponent(task.task_id)}/media`);
-    entry.media = await Promise.all(media.map(async (item, index) => ({
+  const media = await api(`/api/v1/generation-tasks/${encodeURIComponent(task.task_id)}/media`);
+  const uniqueMedia = [...new Map((Array.isArray(media) ? media : []).map(item => [
+    item.media_id || item.result_reference,
+    item,
+  ])).values()];
+  entry.media = await Promise.all(uniqueMedia.map(async (item, index) => ({
       ...item,
       sessionNumber: entry.startNumber + index,
       previewUrl: await authenticatedMediaObjectUrl(item, { thumbnail: true }),
-    })));
-  }
+  })));
   entry.status = 'succeeded';
   entry.taskId = task.task_id;
   entry.createdAt = task.created_at;
@@ -2057,6 +2063,20 @@ async function loadOriginalMediaUrl(media) {
   return media.originalUrl;
 }
 
+async function pollImageSessionTask(taskId, onTask = null) {
+  let delayMs = 1200;
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    if (attempt) {
+      await new Promise(resolve => window.setTimeout(resolve, delayMs));
+      delayMs = Math.min(5000, Math.round(delayMs * 1.35));
+    }
+    const current = await api(`/api/v1/generation-tasks/${encodeURIComponent(taskId)}`);
+    if (onTask) await onTask(current);
+    if (['succeeded', 'failed', 'cancelled'].includes(current.status)) return current;
+  }
+  throw new Error('任务状态查询超时，请稍后重新进入页面查看结果');
+}
+
 async function observeImageSessionTask(entry) {
   if (!entry?.taskId || entry.status !== 'pending') return;
   const observers = state.imageTaskObservers || (state.imageTaskObservers = new Set());
@@ -2064,22 +2084,24 @@ async function observeImageSessionTask(entry) {
   observers.add(entry.taskId);
   try {
     {
-      const task = typeof streamGenerationTask === 'function'
-        ? await streamGenerationTask(
-          entry.taskId,
-          media => updateImageSessionMedia(entry, media),
-          current => {
-            entry.taskStatus = current.status;
-            renderImageSessionResults();
-          },
-        )
-        : await (async () => {
-          while (true) {
-            const current = await api(`/api/v1/generation-tasks/${encodeURIComponent(entry.taskId)}`);
-            if (['succeeded', 'failed', 'cancelled'].includes(current.status)) return current;
-            await new Promise(resolve => window.setTimeout(resolve, 1800));
-          }
-        })();
+      const onTask = current => {
+        entry.taskStatus = current.status;
+        renderImageSessionResults();
+      };
+      let task;
+      if (typeof streamGenerationTask === 'function') {
+        try {
+          task = await streamGenerationTask(
+            entry.taskId,
+            media => updateImageSessionMedia(entry, media),
+            onTask,
+          );
+        } catch (_) {
+          task = await pollImageSessionTask(entry.taskId, onTask);
+        }
+      } else {
+        task = await pollImageSessionTask(entry.taskId, onTask);
+      }
       if (task.status === 'succeeded') {
         await completeImageSessionEntry(entry, task);
         toast(task.partial_delivery

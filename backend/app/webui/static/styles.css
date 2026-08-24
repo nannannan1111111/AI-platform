@@ -219,7 +219,6 @@ a { color: inherit; }
 .canvas-create-form { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
 .canvas-create-form .field { margin-top: 0; }
 .canvas-create-form .canvas-title-field { width: min(280px, 100%); }
-.canvas-create-form .canvas-kind-field { width: 160px; }
 .canvas-create-form .field input, .canvas-create-form .field select { min-height: 40px; }
 .canvas-preview { width: 132px; height: 78px; overflow: hidden; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: #eef2ef; color: var(--muted); font-size: 10px; }
 .canvas-preview img { width: 100%; height: 100%; display: block; object-fit: cover; }
@@ -558,5 +557,5 @@ th { background: var(--surface-soft); color: var(--muted); font-size: 11px; }
   .image-custom-size-head span { text-align:left; }
   .image-workbench .image-chat-input textarea { padding-right:14px; padding-bottom:64px; }
   .canvas-create-form { display: grid; grid-template-columns: 1fr; }
-  .canvas-create-form .canvas-title-field, .canvas-create-form .canvas-kind-field { width: 100%; }
+  .canvas-create-form .canvas-title-field { width: 100%; }
 }

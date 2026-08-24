@@ -16,6 +16,16 @@ V28 及后续候选必须直接从当前生产镜像 V27（或服务器核实到
 
 V27 于 2026-08-24 部署完成：Web 与 10 个 Generation Worker 使用同一镜像；数据库迁移为 `0065_merge_v17_redeem_concurrency`；回环及公网 `/healthz`、`/readyz` 均通过。
 
+## V28 候选（未部署）
+
+- 候选分支：`codex/v28-image-delivery-canvas-interactions`
+- 源码标签建议：`v1.0.8`
+- 镜像建议：`creative-studio:single-host-candidate-v28`
+- 主要修复：隔离 Worker advisory-lock 连接与业务连接池；加固图片页/智能画布的 SSE、受控轮询、媒体恢复和去重；精简 smart-only 新建界面并修复 CSP 按钮绑定。
+- 数据库迁移：无新增迁移；生产 head 仍为 `0065_merge_v17_redeem_concurrency`。
+- 验证：后端 `641 passed, 5 skipped`，Web UI `97 passed`，生成链定向 `141 passed`，连接池/Worker/交付定向 `72 passed`，前端生产构建及语法/差异检查通过。
+- 部署状态：未构建或切换生产容器，生产仍为上述 V27 镜像与摘要，V26 回滚镜像继续保留。
+
 后续部署必须遵循：
 
 1. 先在服务器核实当前 Web 与 Worker 的镜像标签/摘要，并从该生产镜像创建下一候选。

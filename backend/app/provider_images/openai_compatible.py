@@ -344,6 +344,16 @@ class OpenAICompatibleImageSubmissions:
                     max_image_bytes=self._max_image_bytes,
                     route_id=request.route_id,
                 )
+                _LOG.info(
+                    "image provider response normalized route_id=%s status=%s response_keys=%s "
+                    "image_count=%s streamed_image_count=%s provider_task_id=%s",
+                    request.route_id,
+                    _task_status(payload) or "direct",
+                    _response_keys(payload),
+                    len(images),
+                    streamed_image_index,
+                    provider_task_id,
+                )
                 if len(images) > request.quantity:
                     raise ValueError("image provider returned more images than requested")
         except httpx.TransportError as exc:

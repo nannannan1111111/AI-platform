@@ -14844,9 +14844,26 @@ async function pollSmartCanvasTask(taskId, observers={}){
     if(!taskId) throw new Error(tr('smart.errRunFailed'));
     if(activeSmartTaskPolls.has(taskId)) return activeSmartTaskPolls.get(taskId);
     const promise = (async () => {
+        const deliveredMediaKeys = new Set();
+        const notifyMedia = async items => {
+            const unique = (Array.isArray(items) ? items : [items]).filter(item => {
+                const key = typeof item === 'string'
+                    ? item
+                    : item?.media_id || item?.result_reference || item?.url || item?.thumbnail;
+                if(!key || deliveredMediaKeys.has(key)) return false;
+                deliveredMediaKeys.add(key);
+                return true;
+            });
+            if(unique.length && observers.onMedia) await observers.onMedia(unique);
+            return unique;
+        };
         const pollFallback = async () => {
-            for(let i = 0; i < 900; i++){
-                if(i > 0) await new Promise(resolve => setTimeout(resolve, 2000));
+            let delayMs = 1200;
+            for(let i = 0; i < 300; i++){
+                if(i > 0){
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                    delayMs = Math.min(5000, Math.round(delayMs * 1.35));
+                }
                 const task = await fetch(`/api/v1/generation-tasks/${encodeURIComponent(taskId)}`).then(async r => {
                     if(!r.ok) throw new Error(await r.text());
                     return r.json();
@@ -14863,7 +14880,7 @@ async function pollSmartCanvasTask(taskId, observers={}){
                             )),
                         )).filter(Boolean);
                     }
-                    if(mediaItems.length && observers.onMedia) await observers.onMedia(mediaItems);
+                    await notifyMedia(mediaItems);
                     return task.result || {images:mediaItems};
                 }
                 if(['failed', 'cancelled', 'canceled'].includes(task.status)){
@@ -14878,7 +14895,6 @@ async function pollSmartCanvasTask(taskId, observers={}){
             throw new Error(tr('smart.errRunTimeout'));
         };
         if(window.SaaSCanvasGateway?.streamGenerationTask){
-            const streamedMedia = [];
             let task;
             try {
                 task = await window.SaaSCanvasGateway.streamGenerationTask(
@@ -14888,8 +14904,7 @@ async function pollSmartCanvasTask(taskId, observers={}){
                         const items = window.SaaSCanvasGateway?.previewMedia
                             ? (await Promise.all(rawItems.map(item => window.SaaSCanvasGateway.previewMedia(item)))).filter(Boolean)
                             : rawItems;
-                        streamedMedia.push(...items);
-                        if(observers.onMedia) await observers.onMedia(items);
+                        await notifyMedia(items);
                     },
                     async snapshot => {
                         if(observers.onTask) await observers.onTask(snapshot);
@@ -14902,9 +14917,7 @@ async function pollSmartCanvasTask(taskId, observers={}){
                 if(streamError?.taskStatus) throw streamError;
                 return pollFallback();
             }
-            const response = await fetch(`/api/v1/generation-tasks/${encodeURIComponent(taskId)}`);
-            const data = response.ok ? await response.json() : {};
-            if(task.status === 'succeeded') return data.result || {images:streamedMedia};
+            if(task.status === 'succeeded') return pollFallback();
             const failure = new Error(smartTaskFailureMessage(task));
             failure.taskStatus = task.status;
             failure.taskSnapshot = task;

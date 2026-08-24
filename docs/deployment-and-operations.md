@@ -223,7 +223,7 @@ python scripts/backup_manifest.py verify /secure-backups/recovery-point.json \
 
 ```text
 Web 副本数 × WEB_CONCURRENCY × (DATABASE_POOL_SIZE + DATABASE_MAX_OVERFLOW)
-+ Worker 副本数 × (WORKER_DATABASE_POOL_SIZE + WORKER_DATABASE_MAX_OVERFLOW)
++ Worker 副本数 × (WORKER_DATABASE_POOL_SIZE + WORKER_DATABASE_MAX_OVERFLOW + 1 个共享锁会话)
 + 迁移、监控和运维预留
 ```
 

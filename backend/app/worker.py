@@ -11,7 +11,11 @@ from threading import Event
 
 from sqlalchemy import Engine, text
 
-from app.database_runtime import postgres_advisory_generation_dispatch_lock, postgres_advisory_worker_slot
+from app.database_runtime import (
+    PostgresWorkerAdvisoryLocks,
+    configure_postgresql_lock_engine,
+    postgres_worker_advisory_locks,
+)
 from app.observability import METRICS, install_structured_logging
 from app.runtime import create_production_app
 
@@ -102,6 +106,7 @@ def run() -> None:
     batch_size = _positive_int("GENERATION_WORKER_BATCH_SIZE", 20)
     application = create_production_app()
     engine: Engine = application.state.database_engine
+    lock_engine = configure_postgresql_lock_engine(os.environ["DATABASE_URL"])
     submitter = application.state.generation_attempt_submissions
     capacity_settings = application.state.worker_capacity
     deployed_limit = capacity_settings.current().deployed_worker_limit
@@ -114,90 +119,93 @@ def run() -> None:
     signal.signal(signal.SIGINT, stop)
     worker_index: int | None = None
     try:
-        with postgres_advisory_worker_slot(engine, deployed_limit) as worker_index:
-            if worker_index is None:
-                raise RuntimeError("no generation worker deployment slot is available")
-            _LOG.info(
-                "generation worker started index=%s poll_seconds=%s batch_size=%s",
-                worker_index,
-                poll_seconds,
-                batch_size,
-            )
-            METRICS.set("generation_worker_heartbeat", 1, labels={"worker_index": worker_index})
-            with ThreadPoolExecutor(max_workers=50, thread_name_prefix="generation") as executor:
-                in_flight: dict[Future[bool], str] = {}
-                last_capacity: tuple[int, int] | None = None
-                while not stopping.is_set():
-                    capacity = capacity_settings.current()
-                    capacity_key = (capacity.enabled_workers, capacity.concurrency_per_worker)
-                    if capacity_key != last_capacity:
-                        _LOG.info(
-                            "generation worker capacity applied index=%s enabled_workers=%s concurrency=%s active=%s",
-                            worker_index,
-                            capacity.enabled_workers,
-                            capacity.concurrency_per_worker,
-                            worker_index <= capacity.enabled_workers,
-                        )
-                        last_capacity = capacity_key
-                    completed = {future for future in in_flight if future.done()}
-                    for future in completed:
-                        task_id = in_flight.pop(future)
-                        try:
-                            processed = future.result()
-                            METRICS.inc(
-                                "generation_tasks_processed_total",
-                                labels={"outcome": "submitted" if processed else "skipped"},
+        with postgres_worker_advisory_locks(lock_engine) as advisory_locks:
+            with advisory_locks.worker_slot(deployed_limit) as worker_index:
+                if worker_index is None:
+                    raise RuntimeError("no generation worker deployment slot is available")
+                _LOG.info(
+                    "generation worker started index=%s poll_seconds=%s batch_size=%s",
+                    worker_index,
+                    poll_seconds,
+                    batch_size,
+                )
+                METRICS.set("generation_worker_heartbeat", 1, labels={"worker_index": worker_index})
+                with ThreadPoolExecutor(max_workers=50, thread_name_prefix="generation") as executor:
+                    in_flight: dict[Future[bool], str] = {}
+                    last_capacity: tuple[int, int] | None = None
+                    while not stopping.is_set():
+                        capacity = capacity_settings.current()
+                        capacity_key = (capacity.enabled_workers, capacity.concurrency_per_worker)
+                        if capacity_key != last_capacity:
+                            _LOG.info(
+                                "generation worker capacity applied index=%s enabled_workers=%s concurrency=%s active=%s",
+                                worker_index,
+                                capacity.enabled_workers,
+                                capacity.concurrency_per_worker,
+                                worker_index <= capacity.enabled_workers,
                             )
-                            if processed:
-                                METRICS.set("generation_worker_last_success_timestamp", time.time(), labels={"worker_index": worker_index})
-                        except Exception:
-                            METRICS.inc("generation_tasks_processed_total", labels={"outcome": "error"})
-                            _LOG.exception("generation task processing failed task_id=%s", task_id)
-                    worker_enabled = worker_index <= capacity.enabled_workers
-                    available = max(0, capacity.concurrency_per_worker - len(in_flight)) if worker_enabled else 0
-                    scheduled = 0
-                    if available > 0:
-                        with engine.connect() as connection:
-                            candidates = tuple(connection.execute(
-                                _PENDING_TASKS,
-                                {"limit": batch_size},
-                            ))
-                            oldest_age = connection.execute(_OLDEST_QUEUED).scalar_one_or_none()
-                        METRICS.set("generation_queue_oldest_task_age_seconds", float(oldest_age or 0))
-                        METRICS.set("generation_worker_in_flight", len(in_flight), labels={"worker_index": worker_index})
-                        active_task_ids = set(in_flight.values())
-                        for (
-                            account_space_id,
-                            task_id,
-                            _route_id,
-                            concurrency_group,
-                            max_concurrency,
-                            account_concurrency,
-                        ) in candidates:
-                            task_id_text = str(task_id)
-                            if task_id_text in active_task_ids:
-                                continue
-                            future = executor.submit(
-                                _process_candidate,
-                                engine,
-                                submitter,
-                                str(account_space_id),
-                                task_id_text,
-                                int(account_concurrency),
-                                str(concurrency_group),
-                                int(max_concurrency),
-                            )
-                            in_flight[future] = task_id_text
-                            active_task_ids.add(task_id_text)
-                            scheduled += 1
-                            if scheduled >= available:
-                                break
-                    if scheduled == 0:
-                        if in_flight:
-                            wait(tuple(in_flight), timeout=poll_seconds, return_when=FIRST_COMPLETED)
-                        else:
-                            stopping.wait(poll_seconds)
+                            last_capacity = capacity_key
+                        completed = {future for future in in_flight if future.done()}
+                        for future in completed:
+                            task_id = in_flight.pop(future)
+                            try:
+                                processed = future.result()
+                                METRICS.inc(
+                                    "generation_tasks_processed_total",
+                                    labels={"outcome": "submitted" if processed else "skipped"},
+                                )
+                                if processed:
+                                    METRICS.set("generation_worker_last_success_timestamp", time.time(), labels={"worker_index": worker_index})
+                            except Exception:
+                                METRICS.inc("generation_tasks_processed_total", labels={"outcome": "error"})
+                                _LOG.exception("generation task processing failed task_id=%s", task_id)
+                        worker_enabled = worker_index <= capacity.enabled_workers
+                        available = max(0, capacity.concurrency_per_worker - len(in_flight)) if worker_enabled else 0
+                        scheduled = 0
+                        if available > 0:
+                            with engine.connect() as connection:
+                                candidates = tuple(connection.execute(
+                                    _PENDING_TASKS,
+                                    {"limit": batch_size},
+                                ))
+                                oldest_age = connection.execute(_OLDEST_QUEUED).scalar_one_or_none()
+                            METRICS.set("generation_queue_oldest_task_age_seconds", float(oldest_age or 0))
+                            METRICS.set("generation_worker_in_flight", len(in_flight), labels={"worker_index": worker_index})
+                            active_task_ids = set(in_flight.values())
+                            for (
+                                account_space_id,
+                                task_id,
+                                _route_id,
+                                concurrency_group,
+                                max_concurrency,
+                                account_concurrency,
+                            ) in candidates:
+                                task_id_text = str(task_id)
+                                if task_id_text in active_task_ids:
+                                    continue
+                                future = executor.submit(
+                                    _process_candidate,
+                                    advisory_locks,
+                                    engine,
+                                    submitter,
+                                    str(account_space_id),
+                                    task_id_text,
+                                    int(account_concurrency),
+                                    str(concurrency_group),
+                                    int(max_concurrency),
+                                )
+                                in_flight[future] = task_id_text
+                                active_task_ids.add(task_id_text)
+                                scheduled += 1
+                                if scheduled >= available:
+                                    break
+                        if scheduled == 0:
+                            if in_flight:
+                                wait(tuple(in_flight), timeout=poll_seconds, return_when=FIRST_COMPLETED)
+                            else:
+                                stopping.wait(poll_seconds)
     finally:
+        lock_engine.dispose()
         engine.dispose()
         if worker_index is not None:
             METRICS.set("generation_worker_heartbeat", 0, labels={"worker_index": worker_index})
@@ -205,6 +213,7 @@ def run() -> None:
 
 
 def _process_candidate(
+    advisory_locks: PostgresWorkerAdvisoryLocks,
     engine: Engine,
     submitter: object,
     account_space_id: str,
@@ -216,8 +225,7 @@ def _process_candidate(
     task_key = f"generation-task:{task_id}"
     account_pool_key = f"generation-account-running:{account_space_id}"
     pool_key = f"generation-provider-pool:{concurrency_group}"
-    with postgres_advisory_generation_dispatch_lock(
-        engine,
+    with advisory_locks.generation_dispatch_lock(
         task_key,
         account_pool_key,
         account_concurrency,

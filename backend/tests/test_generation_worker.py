@@ -54,28 +54,32 @@ class _Engine:
         return _Connection()
 
 
-def test_worker_holds_one_shared_provider_slot_while_submitting(monkeypatch) -> None:
-    observed: list[tuple[object, str, str, int]] = []
+class _Locks:
+    def __init__(self, result: tuple[int, int] | None = (1, 7)) -> None:
+        self.result = result
+        self.calls: list[tuple[str, str, int, str, int]] = []
 
     @contextmanager
-    def lock(
-        engine: object,
+    def generation_dispatch_lock(
+        self,
         task_key: str,
         account_pool_key: str,
         account_slots: int,
         pool_key: str,
         slots: int,
     ):
-        observed.append((engine, task_key, account_pool_key, account_slots, pool_key, slots))
-        yield (1, 7)
+        self.calls.append((task_key, account_pool_key, account_slots, pool_key, slots))
+        yield self.result
 
-    monkeypatch.setattr("app.worker.postgres_advisory_generation_dispatch_lock", lock)
+
+def test_worker_holds_one_shared_provider_slot_while_submitting() -> None:
+    locks = _Locks()
+
     submitter = _Submitter()
     engine = _Engine()
 
-    assert _process_candidate(engine, submitter, "account-1", "task-1", 6, "upstream-main", 20) is True
-    assert observed == [(
-        engine,
+    assert _process_candidate(locks, engine, submitter, "account-1", "task-1", 6, "upstream-main", 20) is True
+    assert locks.calls == [(
         "generation-task:task-1",
         "generation-account-running:account-1",
         6,
@@ -85,19 +89,15 @@ def test_worker_holds_one_shared_provider_slot_while_submitting(monkeypatch) -> 
     assert submitter.calls == [("account-1", "task-1")]
 
 
-def test_worker_skips_submission_when_shared_provider_pool_is_full(monkeypatch) -> None:
-    @contextmanager
-    def lock(*_args: object):
-        yield None
-
-    monkeypatch.setattr("app.worker.postgres_advisory_generation_dispatch_lock", lock)
+def test_worker_skips_submission_when_shared_provider_pool_is_full() -> None:
+    locks = _Locks(None)
     submitter = _Submitter()
 
-    assert _process_candidate(_Engine(), submitter, "account-1", "task-1", 6, "upstream-main", 20) is False
+    assert _process_candidate(locks, _Engine(), submitter, "account-1", "task-1", 6, "upstream-main", 20) is False
     assert submitter.calls == []
 
 
-def test_single_slot_account_cannot_dispatch_a_later_queued_task(monkeypatch) -> None:
+def test_single_slot_account_cannot_dispatch_a_later_queued_task() -> None:
     class EarlierQueuedEligibility:
         status = "queued"
         running_count = 0
@@ -112,12 +112,26 @@ def test_single_slot_account_cannot_dispatch_a_later_queued_task(monkeypatch) ->
         def connect(self) -> Connection:
             return Connection()
 
-    @contextmanager
-    def lock(*_args: object):
-        yield (1, 1)
-
-    monkeypatch.setattr("app.worker.postgres_advisory_generation_dispatch_lock", lock)
     submitter = _Submitter()
 
-    assert _process_candidate(Engine(), submitter, "account-1", "task-2", 1, "upstream-main", 20) is False
+    assert _process_candidate(_Locks((1, 1)), Engine(), submitter, "account-1", "task-2", 1, "upstream-main", 20) is False
     assert submitter.calls == []
+
+
+def test_worker_uses_business_pool_only_for_eligibility_and_submission() -> None:
+    locks = _Locks((1, 1))
+    business_engine = _Engine()
+    submitter = _Submitter()
+
+    assert _process_candidate(
+        locks,
+        business_engine,
+        submitter,
+        "account-1",
+        "task-1",
+        6,
+        "upstream-main",
+        20,
+    ) is True
+    assert len(locks.calls) == 1
+    assert submitter.calls == [("account-1", "task-1")]

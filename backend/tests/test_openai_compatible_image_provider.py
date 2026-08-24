@@ -1,5 +1,6 @@
 import base64
 import json
+from unittest.mock import patch
 
 import httpx
 
@@ -60,22 +61,32 @@ def test_sync_json_mode_does_not_request_sse_for_gpt_image_2() -> None:
         requested_body.update(json.loads(request.content))
         return httpx.Response(200, json={"data": [{"b64_json": base64.b64encode(_PNG_BYTES).decode()}]})
 
-    result = OpenAICompatibleImageSubmissions(
-        routing,
-        transport=httpx.MockTransport(upstream),
-    ).submit(
-        ProviderGenerationRequest(
-            route_id=route.route_id,
-            provider_idempotency_key="attempt-sync",
-            prompt="a paper-cut fox",
-            aspect_ratio="1:1",
-            quantity=1,
-            output_spec="1k",
+    with patch("app.provider_images.openai_compatible._LOG.info") as log_info:
+        result = OpenAICompatibleImageSubmissions(
+            routing,
+            transport=httpx.MockTransport(upstream),
+        ).submit(
+            ProviderGenerationRequest(
+                route_id=route.route_id,
+                provider_idempotency_key="attempt-sync",
+                prompt="a paper-cut fox",
+                aspect_ratio="1:1",
+                quantity=1,
+                output_spec="1k",
+            )
         )
-    )
 
     assert isinstance(result, ProviderSubmissionCompleted)
     assert "stream" not in requested_body
+    normalized_calls = [call for call in log_info.call_args_list if "response normalized" in call.args[0]]
+    assert len(normalized_calls) == 1
+    message, *args = normalized_calls[0].args
+    diagnostic = message % tuple(args)
+    assert "image provider response normalized" in diagnostic
+    assert "image_count=1" in diagnostic
+    assert "provider-secret" not in diagnostic
+    assert "a paper-cut fox" not in diagnostic
+    assert "api.example.invalid" not in diagnostic
 
 
 def test_sse_mode_requests_stream_for_non_gpt_model() -> None:

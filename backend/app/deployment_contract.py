@@ -40,7 +40,11 @@ class CapacityBudget:
     def application_connections(self) -> int:
         """Return the configured worst-case application connection count."""
         web = self.web_replicas * self.web_concurrency * (self.web_pool_size + self.web_max_overflow)
-        workers = self.worker_replicas * (self.worker_pool_size + self.worker_max_overflow)
+        workers = self.worker_replicas * (
+            self.worker_pool_size
+            + self.worker_max_overflow
+            + 1  # one shared process-lifetime advisory-lock session
+        )
         return web + workers
 
     @property

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from threading import Lock
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Connection, Engine, text
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import NullPool
 
 
 def configure_postgresql_engine(
@@ -27,6 +29,138 @@ def configure_postgresql_engine(
         pool_timeout=pool_timeout_seconds,
         pool_recycle=1800,
     )
+
+
+def configure_postgresql_lock_engine(database_url: str) -> Engine:
+    """Create an unpooled engine for long-lived advisory-lock connections.
+
+    Worker instance and dispatch locks intentionally hold their PostgreSQL
+    sessions for much longer than an ordinary unit of work.  Keeping those
+    sessions out of the bounded application pool prevents an in-flight
+    Provider request from starving result persistence of a connection.
+    """
+    from sqlalchemy import create_engine
+
+    return create_engine(
+        database_url,
+        poolclass=NullPool,
+        pool_pre_ping=True,
+        isolation_level="AUTOCOMMIT",
+    )
+
+
+class PostgresWorkerAdvisoryLocks:
+    """Multiplex one Worker process' session locks over one DB connection.
+
+    PostgreSQL session advisory locks are re-entrant within the same session,
+    so the local key set is part of the correctness contract: concurrent tasks
+    in one Worker must not accidentally share the same account or Provider
+    slot merely because they use the same database connection.
+    """
+
+    def __init__(self, connection: Connection) -> None:
+        self._connection = connection
+        self._guard = Lock()
+        self._held_keys: set[str] = set()
+
+    def _try_acquire(self, key: str) -> bool:
+        if key in self._held_keys:
+            return False
+        acquired = bool(
+            self._connection.scalar(
+                text("SELECT pg_try_advisory_lock(hashtextextended(:key, 0))"),
+                {"key": key},
+            )
+        )
+        if acquired:
+            self._held_keys.add(key)
+        return acquired
+
+    def _release(self, key: str) -> None:
+        if key not in self._held_keys:
+            return
+        try:
+            self._connection.execute(
+                text("SELECT pg_advisory_unlock(hashtextextended(:key, 0))"),
+                {"key": key},
+            )
+        finally:
+            self._held_keys.discard(key)
+
+    @contextmanager
+    def worker_slot(self, slots: int) -> Iterator[int | None]:
+        """Hold one stable Worker ordinal on the shared lock session."""
+        if slots <= 0:
+            raise ValueError("slots must be positive")
+        acquired_key: str | None = None
+        acquired_slot: int | None = None
+        try:
+            with self._guard:
+                for slot in range(1, slots + 1):
+                    key = f"generation-worker-instance:{slot}"
+                    if self._try_acquire(key):
+                        acquired_key = key
+                        acquired_slot = slot
+                        break
+            yield acquired_slot
+        finally:
+            if acquired_key is not None:
+                with self._guard:
+                    self._release(acquired_key)
+
+    @contextmanager
+    def generation_dispatch_lock(
+        self,
+        task_key: str,
+        account_pool_key: str,
+        account_slots: int,
+        provider_pool_key: str,
+        provider_slots: int,
+    ) -> Iterator[tuple[int, int] | None]:
+        """Hold task, user, and Provider slots on the shared lock session."""
+        if account_slots <= 0 or provider_slots <= 0:
+            raise ValueError("account and provider slots must be positive")
+        acquired_keys: list[str] = []
+        result: tuple[int, int] | None = None
+        try:
+            with self._guard:
+                if self._try_acquire(task_key):
+                    acquired_keys.append(task_key)
+                    account_slot = next(
+                        (
+                            slot
+                            for slot in range(account_slots)
+                            if self._try_acquire(f"{account_pool_key}:{slot}")
+                        ),
+                        None,
+                    )
+                    if account_slot is not None:
+                        account_key = f"{account_pool_key}:{account_slot}"
+                        acquired_keys.append(account_key)
+                        provider_slot = next(
+                            (
+                                slot
+                                for slot in range(provider_slots)
+                                if self._try_acquire(f"{provider_pool_key}:{slot}")
+                            ),
+                            None,
+                        )
+                        if provider_slot is not None:
+                            provider_key = f"{provider_pool_key}:{provider_slot}"
+                            acquired_keys.append(provider_key)
+                            result = (account_slot, provider_slot)
+            yield result
+        finally:
+            with self._guard:
+                for key in reversed(acquired_keys):
+                    self._release(key)
+
+
+@contextmanager
+def postgres_worker_advisory_locks(engine: Engine) -> Iterator[PostgresWorkerAdvisoryLocks]:
+    """Open the one long-lived advisory-lock session for a Worker process."""
+    with engine.connect() as connection:
+        yield PostgresWorkerAdvisoryLocks(connection)
 
 
 @contextmanager
