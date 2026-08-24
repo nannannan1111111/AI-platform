@@ -75,7 +75,9 @@ def test_authenticated_user_creates_and_reads_only_their_canvas() -> None:
     assert canvas["user_id"] == first.user_id
     assert canvas["account_space_id"] == first.account_space_id
     assert canvas["title"] == "第一张画布"
-    assert canvas["kind"] == "classic"
+    # Legacy clients may still send kind=classic, but the creation endpoint
+    # must never persist a new classic canvas.
+    assert canvas["kind"] == "smart"
     assert canvas["version"] == 1
     assert canvas["document"] == {
         "nodes": [],

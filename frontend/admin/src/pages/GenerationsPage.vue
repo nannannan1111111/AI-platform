@@ -36,7 +36,7 @@ async function load(): Promise<void> {
     const resultsByTask = new Map(resultEntries);
     tasks.value = recent.map((task: JsonRecord) => {
       const canvas = task.canvas_id ? canvasesById.get(task.canvas_id) as JsonRecord | undefined : undefined;
-      const source = !task.canvas_id ? "文生图" : !canvas ? "已删除画布" : `“${canvas.title || "未命名画布"}”-${canvas.kind === "smart" ? "智能画布" : "经典画布"}`;
+      const source = !task.canvas_id ? "文生图" : !canvas ? "已删除画布" : `“${canvas.title || "未命名画布"}”-${canvas.kind === "smart" ? "智能画布" : "历史画布"}`;
       return { ...task, source_label: source, results: resultsByTask.get(task.task_id) || [] };
     });
   } catch (caught) { error.value = errorMessage(caught); }

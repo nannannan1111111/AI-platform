@@ -324,7 +324,10 @@ class _MediaArchiveRequest(BaseModel):
 
 class _CanvasCreation(BaseModel):
     title: str = "未命名画布"
-    kind: str = "classic"
+    # New canvases are smart-only. Keep accepting the legacy field so old
+    # clients do not fail at validation, but the endpoint below always
+    # persists ``smart`` and never recreates a classic canvas.
+    kind: str = "smart"
 
 
 class _CanvasSave(BaseModel):
@@ -2822,7 +2825,7 @@ def create_app(
                         user_id=current.user_id,
                         account_space_id=current.account_space_id,
                         title=request.title,
-                        kind=request.kind,
+                        kind="smart",
                         created_at=(clock or (lambda: datetime.now(UTC)))(),
                     )
                 )

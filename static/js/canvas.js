@@ -370,7 +370,9 @@ let internalDrag = false;
 let selected = new Set();
 let saveTimer = null;
 let creatingCanvas = false;
-let createCanvasKind = 'classic';
+// Classic canvases remain readable for history, but are no longer a product
+// entry point. Every new canvas created by this legacy shell is smart.
+let createCanvasKind = 'smart';
 let trashMode = false;
 let pendingDeleteCanvasId = null;
 let pendingPurgeCanvasId = null;
@@ -1162,22 +1164,20 @@ function ensureCanvas(){
     setStatus(tr('canvas.needCanvas'));
     return false;
 }
-function setCreateMode(active, kind='classic'){
+function setCreateMode(active, kind='smart'){
     creatingCanvas = active;
-    createCanvasKind = active ? ((kind === 'smart') ? 'smart' : 'classic') : 'classic';
+    createCanvasKind = active ? 'smart' : 'smart';
     if(active) trashMode = false;
     canvasGate.classList.toggle('creating', active);
     refreshGateViewControls();
     setStatus(active ? tr('canvas.enterCanvasName') : (canvases.length ? tr('canvas.chooseFirst') : tr('canvas.noCanvasCreateFirst')));
     if(active) {
-        gateTitleInput.placeholder = createCanvasKind === 'smart'
-            ? (tr('canvas.newSmartCanvasPlaceholder') || tr('canvas.newCanvasPlaceholder'))
-            : tr('canvas.newCanvasPlaceholder');
+        gateTitleInput.placeholder = tr('canvas.newSmartCanvasPlaceholder') || tr('canvas.newCanvasPlaceholder');
         gateTitleInput.focus();
         gateTitleInput.select();
     } else {
         gateTitleInput.value = '';
-        gateTitleInput.placeholder = tr('canvas.newCanvasPlaceholder');
+        gateTitleInput.placeholder = tr('canvas.newSmartCanvasPlaceholder') || tr('canvas.newCanvasPlaceholder');
     }
     refreshIcons();
 }
@@ -1760,6 +1760,7 @@ function renderCanvasListInto(list){
     items.forEach(item => {
         const row = document.createElement('div');
         const isSmartCanvas = (item.kind || 'classic') === 'smart';
+        const isHistoricalClassic = !isSmartCanvas;
         const color = String(item.color || '').trim();
         const owner = String(item.owner || '').trim();
         const pinned = !!item.pinned && !trashMode;
@@ -1772,7 +1773,7 @@ function renderCanvasListInto(list){
             <div class="canvas-open" role="button" tabindex="${trashMode ? '-1' : '0'}">
                 <div class="canvas-card-icon-row">
                     <span class="canvas-preview-mark ${color ? `icon-has-color cc-${escapeAttr(color)}` : ''}" role="button" tabindex="0" title="${trashMode ? tr('canvas.deletedCanvas') : (tr('canvas.editMeta') || '编辑图标 / 颜色 / 负责人')}">${renderCanvasIcon(isSmartCanvas && /[^\x00-\x7F]/.test(item.icon || '') ? 'sparkles' : item.icon, 16)}</span>
-                    ${isSmartCanvas ? `<span class="canvas-kind-chip">${tr('canvas.smartCanvasShort')}</span>` : ''}
+                    <span class="canvas-kind-chip">${isSmartCanvas ? tr('canvas.smartCanvasShort') : '历史数据'}</span>
                 </div>
                 <div class="canvas-card-title">${escapeHtml(item.title)}</div>
                 ${ownerChip}
@@ -1820,7 +1821,13 @@ function renderCanvasListInto(list){
                 </button>
             `)}
         `;
-        if(!trashMode) row.querySelector('.canvas-open').onclick = () => openCanvas(item.id);
+        if(!trashMode) row.querySelector('.canvas-open').onclick = () => {
+            if(isHistoricalClassic){
+                setStatus('历史经典画布已保留，经典编辑器入口已停用');
+                return;
+            }
+            openCanvas(item.id);
+        };
         const titleEl = row.querySelector('.canvas-card-title');
         const editBtn = row.querySelector('.canvas-card-edit');
         if(editBtn && titleEl && !trashMode) {
@@ -1938,8 +1945,7 @@ function positionCanvasMetaPopover(){
 }
 async function createCanvas(){
     const customTitle = gateTitleInput?.value.trim();
-    const isSmart = createCanvasKind === 'smart';
-    const titleBase = isSmart ? tr('canvas.newSmartCanvas') : tr('canvas.newCanvas');
+    const titleBase = tr('canvas.newSmartCanvas');
     const title = customTitle || `${titleBase} ${new Date().toLocaleTimeString(window.StudioI18n?.lang() === 'en' ? 'en-US' : 'zh-CN', {hour:'2-digit', minute:'2-digit'})}`;
     trashMode = false;
     refreshGateViewControls();
@@ -1948,32 +1954,13 @@ async function createCanvas(){
         const res = await fetch('/api/canvases', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({title, icon:isSmart ? 'sparkles' : '🧩', kind:isSmart ? 'smart' : 'classic'})
+            body:JSON.stringify({title, icon:'sparkles', kind:'smart'})
         });
         if(!res.ok) throw new Error(tr('canvas.createFailed'));
         const data = await res.json();
-        if(isSmart){
-            setCreateMode(false);
-            await loadCanvasList(false);
-            openSmartCanvasPage(data.canvas?.id);
-            return;
-        }
-        resetCascadeRuntimeState();
-        canvas = data.canvas;
-        canvas.logs = canvas.logs || [];
-        nodes = canvas.nodes || [];
-        connections = canvas.connections || [];
-        viewport = localViewportForCanvas(canvas.id, canvas.viewport || {x:0, y:0, scale:1});
-        canvas.viewport = {...viewport};
-        resetTransientRunState(nodes);
-        sanitizeConnections();
-        selected.clear();
-        setCanvasMode(true);
-        render();
-        setStatus('Saved');
         setCreateMode(false);
         await loadCanvasList(false);
-        renderCanvasList();
+        openSmartCanvasPage(data.canvas?.id);
     } catch(e) {
         setStatus(tr('canvas.createFailed'));
         console.error(e);
@@ -2104,7 +2091,9 @@ async function openCanvas(id){
         rememberCanvasListProject(canvas.project || 'default');
         const touched = await touchCanvasOpened(canvas.id);
         if(touched?.updated_at) canvas.updated_at = Number(touched.updated_at);
-        if((canvas.kind || 'classic') === 'smart'){
+        // Historical classic records are never opened in the retired editor.
+        // The smart shell remains the only editor URL for compatibility.
+        if((canvas.kind || 'classic') !== 'smart'){
             openSmartCanvasPage(canvas.id);
             return;
         }
@@ -2391,7 +2380,7 @@ window.openCanvas = openCanvas;
 window.deleteCanvas = deleteCanvas;
 window.returnToCanvasManager = returnToCanvasManager;
 // 选画布 gate 已拆分到 canvas-list.html；编辑器页不再含这些元素，用可选链避免空引用报错。
-gateCreateBtn?.addEventListener('click', () => setCreateMode(true));
+gateCreateBtn?.addEventListener('click', createSmartCanvas);
 gateCreateSmartBtn?.addEventListener('click', createSmartCanvas);
 gateBackBtn?.addEventListener('click', () => setTrashMode(false));
 gateTrashBtn?.addEventListener('click', () => setTrashMode(true));

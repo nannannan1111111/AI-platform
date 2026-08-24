@@ -394,6 +394,24 @@ assert.deepEqual(resumed, ['result-1']);
     assert result.returncode == 0, result.stderr
 
 
+def test_smart_canvas_observes_live_task_status_and_bounds_recovery_concurrency() -> None:
+    client = TestClient(create_app(InMemoryAccountAccess()))
+    smart = client.get("/static/js/smart-canvas.js")
+
+    assert smart.status_code == 200
+    source = smart.text
+    assert "applySmartTaskStatus" in source
+    assert "appendSmartTaskMedia" in source
+    assert "liveStatusHint" in source
+    assert "SMART_TASK_RESUME_CONCURRENCY = 6" in source
+    assert "withSmartTaskResumeSlot" in source
+    assert "onTask: snapshot => applySmartTaskStatus" in source
+    assert "onMedia: items => appendSmartTaskMedia" in source
+    assert "window.SaaSCanvasGateway.previewMedia(item)" in source
+    assert "/api/v1/generation-tasks/${encodeURIComponent(taskId)}" in source
+    assert "task-failed-cell" in source
+
+
 def test_classic_canvas_persists_the_task_binding_before_submission() -> None:
     client = TestClient(create_app(InMemoryAccountAccess()))
     classic = client.get("/static/js/canvas.js")
@@ -2763,7 +2781,7 @@ def test_canvas_list_uses_stable_creation_order_and_displays_canvas_type() -> No
     assert "Date.parse(right.updated_at || '') - Date.parse(left.updated_at || '')" not in script
     assert "<th>画布类型</th>" in script
     assert "已停用（历史数据保留）" in script
-    assert "经典画布入口已取消" in script
+    assert "历史画布不提供编辑入口" in script
     assert '<option value="classic">' not in script
     assert "<th>画布标识</th>" not in script
     assert "canvas-create-form" in script

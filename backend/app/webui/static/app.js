@@ -1023,7 +1023,7 @@ function canvasesTable(canvases, previews = new Map()) {
     <td>${escapeHTML(canvas.version)}</td>
     <td>${formatDate(canvas.updated_at)}</td>
     <td>${canvas.kind === 'smart' ? '智能画布' : '<span class="status">已停用（历史数据保留）</span>'}</td>
-    <td><div class="row-actions">${canvas.kind === 'smart' ? `<button class="primary-btn" type="button" data-canvas-open="${escapeHTML(canvas.canvas_id)}" data-canvas-kind="smart">打开画布</button>` : '<span class="image-edit-sub">经典画布入口已取消</span>'}<button class="danger-btn" type="button" data-canvas-delete="${escapeHTML(canvas.canvas_id)}" data-canvas-title="${escapeHTML(canvas.title || '未命名画布')}">${canvas.kind === 'smart' ? '永久删除' : '删除历史画布'}</button>${canvas.kind === 'smart' ? `<button class="secondary-btn" type="button" data-canvas-export="${escapeHTML(canvas.canvas_id)}" data-canvas-title="${escapeHTML(canvas.title || '未命名画布')}">导出</button>` : ''}</div></td>
+    <td><div class="row-actions">${canvas.kind === 'smart' ? `<button class="primary-btn" type="button" data-canvas-open="${escapeHTML(canvas.canvas_id)}" data-canvas-kind="smart">打开画布</button>` : '<span class="image-edit-sub">历史画布不提供编辑入口</span>'}<button class="danger-btn" type="button" data-canvas-delete="${escapeHTML(canvas.canvas_id)}" data-canvas-title="${escapeHTML(canvas.title || '未命名画布')}">${canvas.kind === 'smart' ? '永久删除' : '删除历史画布'}</button>${canvas.kind === 'smart' ? `<button class="secondary-btn" type="button" data-canvas-export="${escapeHTML(canvas.canvas_id)}" data-canvas-title="${escapeHTML(canvas.title || '未命名画布')}">导出</button>` : ''}</div></td>
   </tr>`).join('')}</tbody></table></div>`;
 }
 
@@ -1037,7 +1037,7 @@ function canvasEditorUrl(canvasId, kind) {
 function canvasWorkspaceContent(canvases, previews = new Map()) {
   return `<div class="page-head"><div><h1>无限画布</h1><p>在可缩放画布中组织图片、提示词和生成节点。画布与媒体仅属于当前账户空间。</p></div></div>
     <section class="panel"><div class="section-head" style="margin-top:0"><div><h2>新建画布</h2><p>首版开放图片、提示词、循环、平台生图和输出节点；其他本地 Provider 能力暂不开放。</p></div></div>
-      <form class="canvas-create-form" id="canvas-create-form"><div class="field canvas-title-field"><label for="canvas-title">画布名称</label><input id="canvas-title" name="title" maxlength="80" required placeholder="例如：夏季主视觉"></div><div class="field canvas-kind-field"><label for="canvas-kind">画布类型</label><input id="canvas-kind" type="text" value="智能画布" readonly aria-describedby="canvas-kind-hint"><small id="canvas-kind-hint" class="image-edit-sub">经典画布已停止创建；历史数据仍保留。</small></div><button class="primary-btn" type="submit">创建并打开</button></form>
+      <form class="canvas-create-form" id="canvas-create-form"><div class="field canvas-title-field"><label for="canvas-title">画布名称</label><input id="canvas-title" name="title" maxlength="80" required placeholder="例如：夏季主视觉"></div><div class="field canvas-kind-field"><label for="canvas-kind">画布类型</label><input id="canvas-kind" type="text" value="智能画布" readonly aria-describedby="canvas-kind-hint"><small id="canvas-kind-hint" class="image-edit-sub">历史画布数据继续保留，不提供旧编辑器入口。</small></div><button class="primary-btn" type="submit">创建并打开</button></form>
     </section>
     <section class="panel"><div class="section-head" style="margin-top:0"><div><h2>我的画布</h2><p>保存采用版本校验，避免不同浏览器窗口静默覆盖彼此的修改。</p></div><button class="secondary-btn" type="button" data-canvas-refresh>刷新</button></div>${canvasesTable(canvases, previews)}</section>`;
 }
