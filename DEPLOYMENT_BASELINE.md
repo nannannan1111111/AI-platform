@@ -4,13 +4,17 @@
 
 截至 2026-08-24，当前生产基线为：
 
-- 运行镜像：`creative-studio:single-host-candidate-v26`
-- 回滚镜像：`creative-studio:single-host-rollback-v25`
+- 运行镜像：`creative-studio:single-host-candidate-v27`
+- 运行镜像摘要：`sha256:40c29e85691bf0460cf55aaed727a48b544f807e0457c279d9bedcec1858c71e`
+- 回滚镜像：`creative-studio:single-host-rollback-v26`
+- 回滚镜像摘要：`sha256:22e90333d05683b378bf5b0766b26ad44bc4ae025df3bfb2f7afb92122c02427`
 - Compose：`/opt/infinite-canvas/compose.production.yml`
 - 环境文件：`/etc/infinite-canvas/single-host.env`
 - Generation Worker：10 个
 
-V27 及后续候选必须直接从当前生产镜像 V26（或服务器核实到的更新生产镜像）创建，先复制为不可变回滚标签，再叠加本次小范围补丁。不得重新从 V17、旧工作树或当前 `main` 的干净提交直接覆盖生产。
+V28 及后续候选必须直接从当前生产镜像 V27（或服务器核实到的更新生产镜像）创建，先复制为不可变回滚标签，再叠加本次小范围补丁。不得重新从 V17、旧工作树或当前 `main` 的干净提交直接覆盖生产。
+
+V27 于 2026-08-24 部署完成：Web 与 10 个 Generation Worker 使用同一镜像；数据库迁移为 `0065_merge_v17_redeem_concurrency`；回环及公网 `/healthz`、`/readyz` 均通过。
 
 后续部署必须遵循：
 

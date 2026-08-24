@@ -7,8 +7,8 @@
 - 基线分支：`codex/v1-baseline`
 - 基线提交：`9967387 chore: establish V1 baseline from current working source`
 - 本次功能提交：在基线之上叠加经典画布下线、画布生图实时状态补丁和 V26 迁移链兼容修复。
-- 当前本地发布提交：`cfa5d2c test: align V1 release contracts`（标签 `v1.0.2`）。
-- 生产仍保持 V26：`creative-studio:single-host-candidate-v26`；本次未部署。
+- 当前发布提交：`89e195f feat: add single-host candidate release gate`（标签 `v1.0.7`）。
+- 生产已部署 V27：`creative-studio:single-host-candidate-v27`；V26 保留为 `creative-studio:single-host-rollback-v26`。
 - V26 只读核验摘要：`sha256:22e90333d05683b378bf5b0766b26ad44bc4ae025df3bfb2f7afb92122c02427`。
 
 ## 迭代门禁
@@ -35,4 +35,13 @@
 - Web UI 定向测试：`93 passed`。
 - 后端全量测试：`632 passed, 5 skipped`。
 - JS/Python 语法检查和 `git diff --check`：通过。
-- 当前仍未生成 V27、未切换生产流量。
+- 当时尚未生成 V27、未切换生产流量；最终部署状态见下节。
+
+## V1.0.7 生产部署
+
+- 最终全量测试：`633 passed, 5 skipped`。
+- 供应链工作流 `32710607320` 全绿，包含锁复现、SBOM、Trivy、构建和 Cosign 签名。
+- V27 摘要：`sha256:40c29e85691bf0460cf55aaed727a48b544f807e0457c279d9bedcec1858c71e`。
+- 使用单机发布脚本切换 Web 与 10 个 Generation Worker，镜像摘要一致。
+- 数据库迁移保持 `0065_merge_v17_redeem_concurrency`；回环与公网健康/就绪检查通过。
+- V26 摘要 `sha256:22e90333d05683b378bf5b0766b26ad44bc4ae025df3bfb2f7afb92122c02427` 已保留为回滚镜像。
