@@ -10928,6 +10928,10 @@ function smartCanvasUploadedMediaFields(file){
     const fields = {};
     if(file?.media_id) fields.media_id = file.media_id;
     if(file?.mime_type) fields.mime_type = file.mime_type;
+    // SaaS media content requires an authenticated request. Keep the blob
+    // thumbnail returned by the gateway on every upload/edit path so the
+    // canvas never falls back to an unauthenticated <img src=".../content">.
+    if(file?.thumbnail) fields.thumbnail = file.thumbnail;
     const mediaState = file?.mediaState || file?.state
         || (window.SaaSCanvasGateway?.active && file?.media_id ? 'persistent' : '');
     if(mediaState) fields.mediaState = mediaState;
@@ -10975,7 +10979,21 @@ async function applyImageCrop(){
     const blob = await new Promise(resolve => canvasEl.toBlob(resolve, 'image/png'));
     const base = (image.name || 'image').replace(/\.[^.]+$/, '');
     const file = blob ? await uploadCroppedBlob(blob, `${base}_crop.png`) : null;
-    if(file && replaceEditedImage(file)){ closeImageEditor(); render(); scheduleSave(); }
+    if(file){
+        const layout = imageLayout(node.images || [], nodeScale(node), node);
+        createNode((node.x || 0) + layout.width + 40, node.y || 0, [{
+            url:file.url,
+            name:file.name,
+            kind:'image',
+            ...smartCanvasUploadedMediaFields(file),
+            natural_w:sw,
+            natural_h:sh,
+            croppedFrom:node.id,
+        }]);
+        closeImageEditor();
+        render();
+        scheduleSave();
+    }
 }
 async function applyImageOutpaint(){
     if(!cropState) return;

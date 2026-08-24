@@ -5654,7 +5654,7 @@ async function applyImageCrop(){
     const base = (node.name || 'image').replace(/\.[^.]+$/, '');
     const file = await uploadCroppedBlob(blob, `${base}_crop.png`);
     if(file){
-        replaceCanvasImageNodeMedia(node, file, {mediaKind:'image'});
+        addGeneratedImageNode(file, node, 'crop', 28, {mediaKind:'image', natural_w:sw, natural_h:sh});
         closeImageEditor();
         render();
         scheduleSave();

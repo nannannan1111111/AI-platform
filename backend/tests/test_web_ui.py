@@ -2775,6 +2775,92 @@ eval(source.slice(start, end));
     assert result.returncode == 0, result.stderr
 
 
+def test_smart_canvas_edit_media_keeps_thumbnail_and_crop_creates_a_new_node() -> None:
+    client = TestClient(create_app(InMemoryAccountAccess()))
+    smart = client.get("/static/js/smart-canvas.js")
+    harness = r"""
+const assert = require('node:assert/strict');
+const source = require('node:fs').readFileSync(0, 'utf8');
+const start = source.indexOf('function smartCanvasUploadedMediaFields');
+const end = source.indexOf('async function applyImageOutpaint', start);
+assert.ok(start >= 0 && end > start, 'smart canvas edit helpers are missing');
+const node = {id: 'source', type: 'smart-image', x: 10, y: 20, images: [{url: '/api/v1/media/original/content', media_id: 'media-original'}]};
+const image = node.images[0];
+let cropState = {nodeId: 'source', x: 10, y: 20, w: 60, h: 50};
+const created = [];
+global.window = {SaaSCanvasGateway: {active: true}};
+global.document = {getElementById(id) { assert.equal(id, 'cropImage'); return {
+  naturalWidth: 100, naturalHeight: 80, clientWidth: 100, clientHeight: 80,
+}; }};
+global.document.createElement = tag => ({width: 0, height: 0, getContext() { return {drawImage() {}}; }, toBlob(cb) { cb({}); }});
+const currentEditImage = () => ({node, image, index: 0});
+const uploadCroppedBlob = async () => ({url: '/api/v1/media/crop/content', name: 'crop.png', media_id: 'media-crop', thumbnail: 'blob:crop-thumb', mime_type: 'image/png', mediaState: 'persistent'});
+const imageLayout = () => ({width: 200});
+const nodeScale = () => 1;
+const createNode = (x, y, images) => { created.push({x, y, images}); return {id: 'crop'}; };
+const closeImageEditor = () => {};
+const render = () => {};
+const scheduleSave = () => {};
+eval(source.slice(start, end));
+assert.equal(smartCanvasUploadedMediaFields({media_id: 'm', thumbnail: 'blob:t'}).thumbnail, 'blob:t');
+(async () => {
+  await applyImageCrop();
+  assert.equal(created.length, 1, 'crop should create a separate image node');
+  assert.equal(node.images[0].media_id, 'media-original', 'source image must remain unchanged');
+  assert.equal(created[0].images[0].media_id, 'media-crop');
+  assert.equal(created[0].images[0].thumbnail, 'blob:crop-thumb');
+})();
+"""
+    result = subprocess.run(
+        ["node", "-e", harness],
+        input=smart.text,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_classic_canvas_crop_creates_a_separate_image_node() -> None:
+    client = TestClient(create_app(InMemoryAccountAccess()))
+    classic = client.get("/static/js/canvas.js")
+    harness = r"""
+const assert = require('node:assert/strict');
+const source = require('node:fs').readFileSync(0, 'utf8');
+const start = source.indexOf('async function applyImageCrop');
+const end = source.indexOf('async function applyImageOutpaint', start);
+assert.ok(start >= 0 && end > start, 'classic crop helper is missing');
+const node = {id: 'source', type: 'image', x: 10, y: 20, w: 200, url: 'blob:original', name: 'original.png'};
+let cropState = {nodeId: 'source', x: 10, y: 20, w: 60, h: 50};
+const created = [];
+const nodes = [node];
+global.document = {getElementById(id) { assert.equal(id, 'cropImage'); return {naturalWidth: 100, naturalHeight: 80, clientWidth: 100, clientHeight: 80}; }, createElement() { return {width: 0, height: 0, getContext() { return {drawImage() {}}; }, toBlob(cb) { cb({}); }}; }};
+const uploadCroppedBlob = async () => ({url: 'blob:crop', name: 'crop.png', media_id: 'media-crop', thumbnail: 'blob:crop-thumb'});
+const addGeneratedImageNode = (file, sourceNode, suffix, offsetY, extra) => { created.push({file, sourceNode, suffix, offsetY, extra}); };
+const closeImageEditor = () => {};
+const render = () => {};
+const scheduleSave = () => {};
+eval(source.slice(start, end));
+(async () => {
+  await applyImageCrop();
+  assert.equal(created.length, 1);
+  assert.equal(created[0].sourceNode, node);
+  assert.equal(created[0].suffix, 'crop');
+  assert.equal(node.url, 'blob:original');
+})();
+"""
+    result = subprocess.run(
+        ["node", "-e", harness],
+        input=classic.text,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_smart_canvas_reconciles_media_after_terminal_sse_event() -> None:
     client = TestClient(create_app(InMemoryAccountAccess()))
     smart = client.get("/static/js/smart-canvas.js")
