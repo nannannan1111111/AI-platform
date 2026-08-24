@@ -98,7 +98,7 @@ def test_production_settings_parse_explicit_deployment_values(tmp_path: Path) ->
     assert settings.database_max_overflow == 4
     assert settings.database_pool_timeout_seconds == 10
     assert settings.generation_submission_mode == "queued"
-    assert settings.generation_worker_deployed_limit == 4
+    assert settings.generation_worker_deployed_limit == 10
     assert settings.auth_abuse_policies.login_ip.limit == 10
     assert settings.auth_abuse_policies.login_email.limit == 5
     assert settings.trusted_proxy_cidrs == ()
@@ -107,7 +107,7 @@ def test_production_settings_parse_explicit_deployment_values(tmp_path: Path) ->
     assert settings.metrics_token is None
 
 
-def test_production_settings_default_to_twenty_active_image_units(tmp_path: Path) -> None:
+def test_production_settings_default_to_five_hundred_active_image_units(tmp_path: Path) -> None:
     settings = ProductionSettings.from_environ(
         {
             "DATABASE_URL": "postgresql+psycopg://example.invalid/app",
@@ -119,7 +119,7 @@ def test_production_settings_default_to_twenty_active_image_units(tmp_path: Path
         }
     )
 
-    assert settings.max_active_generation_tasks == 20
+    assert settings.max_active_generation_tasks == 500
 
 
 def test_production_settings_parse_capacity_controls(tmp_path: Path) -> None:

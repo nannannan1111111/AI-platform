@@ -161,7 +161,7 @@ def test_administrator_updates_one_users_generation_execution_concurrency() -> N
     assert artist_view["generation_execution_concurrency"] == 7
 
 
-def test_user_generation_execution_concurrency_must_be_between_one_and_twenty() -> None:
+def test_user_generation_execution_concurrency_must_be_between_one_and_fifty() -> None:
     accounts = InMemoryAccountAccess()
     accounts.register("admin@example.com", "a-correct-horse-battery-staple")
     artist = accounts.register("artist@example.com", "another-correct-horse-battery-staple")
@@ -179,7 +179,7 @@ def test_user_generation_execution_concurrency_must_be_between_one_and_twenty() 
     response = client.put(
         f"/api/v1/admin/users/{artist.user_id}/generation-limit",
         headers={"Authorization": f"Bearer {session.access_token}"},
-        json={"execution_concurrency": 21},
+        json={"execution_concurrency": 51},
     )
 
     assert response.status_code == 422
