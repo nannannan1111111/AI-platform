@@ -107,3 +107,17 @@ def test_tencent_production_environment_uses_loopback_proxy_and_hsts() -> None:
     assert "sslmode=require" in environment_example
     assert "GENERATED_MEDIA_HOST_PATH=/srv/infinite-canvas/data/generated-media" in environment_example
     assert "PROVIDER_SECRETS_HOST_PATH=/srv/infinite-canvas/secrets/providers" in environment_example
+
+
+def test_single_host_candidate_release_has_automatic_v26_rollback() -> None:
+    deploy_script = _read(TENCENT_ROOT / "scripts" / "deploy-single-host-candidate.sh")
+
+    assert "/etc/infinite-canvas/single-host.env" in deploy_script
+    assert "/root/data/disk/infinite-canvas/releases" in deploy_script
+    assert 'candidate migration head ($candidate_head) differs from database head ($database_head)' in deploy_script
+    assert 'trap rollback ERR' in deploy_script
+    assert 'set_image "$rollback_image"' in deploy_script
+    assert 'run --rm --no-deps migrate' in deploy_script
+    assert 'http://127.0.0.1:8000/healthz' in deploy_script
+    assert 'http://127.0.0.1:8000/readyz' in deploy_script
+    assert 'Web/Worker image mismatch' in deploy_script
