@@ -42,7 +42,7 @@ def test_python_saas_web_shell_exposes_user_model_catalog_page() -> None:
 
     assert page.status_code == 200
     assert 'id="app"' in page.text
-    assert "/web-assets/app.js?v=worker-capacity-2" in page.text
+    assert "/web-assets/app.js?v=page-load-timeout-6" in page.text
     assert "/web-assets/styles.css?v=sidebar-scroll-1" in page.text
     assert "/api/v1/image-models" in script.text
     assert "逻辑模型" in script.text
@@ -1269,11 +1269,14 @@ let reads = 0;
 global.window = {SaaSCanvasGateway: {active: true}};
 global.setTimeout = callback => { callback(); return 1; };
 global.fetch = async path => {
-  assert.equal(path, '/api/canvas-image-tasks/task-running');
+  if (path === '/api/v1/generation-tasks/task-running/media') {
+    return new Response(JSON.stringify([{media_id: 'media-1'}]), {status: 200});
+  }
+  assert.equal(path, '/api/v1/generation-tasks/task-running');
   reads += 1;
   const payload = reads === 1
     ? {task_id: 'task-running', status: 'running'}
-    : {task_id: 'task-running', status: 'succeeded', result: {images: [{media_id: 'media-1'}]}};
+    : {task_id: 'task-running', status: 'succeeded'};
   return new Response(JSON.stringify(payload), {status: 200});
 };
 eval(functionSource);
@@ -2132,7 +2135,7 @@ def test_saas_smart_canvas_maps_local_workflow_transfer_to_account_scoped_endpoi
     assert "await restoreCanvasMediaPreviews(workflow)" in gateway.text
     assert "'/api/canvas-workflows/'" not in gateway.text
     assert "ZIP 内图片会持久导入当前画布，并立即占用存储容量" in page.text
-    assert "/web-assets/saas-canvas-gateway.js?v=canvas-generation-delivery-2" in page.text
+    assert "/web-assets/saas-canvas-gateway.js?v=canvas-generation-delivery-4" in page.text
 
 
 def test_saas_canvas_gateway_projects_legacy_config_from_the_safe_model_catalog() -> None:
@@ -2245,7 +2248,7 @@ def test_smart_canvas_restores_generation_log_context() -> None:
     script = client.get("/static/js/smart-canvas.js")
 
     assert page.status_code == 200
-    assert "entryVersion=smart-log-open-1" in page.text
+    assert "entryVersion=smart-task-status-1" in page.text
     assert "rememberSmartPendingLog" in script.text
     assert "restoredSmartPendingLogContext" in script.text
     assert "pendingLogStartedAt" in script.text
@@ -2258,8 +2261,8 @@ def test_canvas_generation_logs_expire_after_24_hours() -> None:
     classic_script = client.get("/static/js/canvas.js")
     smart_script = client.get("/static/js/smart-canvas.js")
 
-    assert "entryVersion=log-retention-24h-1" in classic_page.text
-    assert "entryVersion=smart-log-open-1" in smart_page.text
+    assert "entryVersion=smart-task-status-1" in classic_page.text
+    assert "entryVersion=smart-task-status-1" in smart_page.text
     assert "GENERATION_LOG_RETENTION_MS = 24 * 60 * 60 * 1000" in classic_script.text
     assert "SMART_GENERATION_LOG_RETENTION_MS = 24 * 60 * 60 * 1000" in smart_script.text
     assert "pruneGenerationLogs" in classic_script.text
@@ -2375,7 +2378,7 @@ def test_python_saas_web_shell_exposes_top_level_image_generation_with_reference
     assert "height:112px; min-height:112px; max-height:112px" in styles.text
     assert "--reference-thumbnail-size" in styles.text
     assert "data-reference-expand" in script.text
-    assert "openImageLightbox(media.previewUrl" in script.text
+    assert "openImageLightbox(await loadOriginalMediaUrl(media)" in script.text
     assert "container._referenceExpandBound" in script.text
     assert "container.addEventListener('click'" in script.text
     assert "cursor:zoom-in" in styles.text
@@ -2748,7 +2751,7 @@ def test_generation_task_page_can_clear_terminal_history_and_uses_wide_layout() 
     assert "'generation-history-page'" in script
     assert ".page.generation-history-page" in styles
     assert ".generation-history-table { overflow: visible; }" in styles
-    assert "queueVersion=user-generation-queue-5" in page
+    assert "queueVersion=user-generation-queue-6" in page
 
 
 def test_generation_task_page_exposes_read_only_view_actions_without_retry_or_delete() -> None:
@@ -3188,7 +3191,7 @@ def test_python_saas_web_shell_mounts_vue_admin_and_workspace_pages() -> None:
     assert page.status_code == 200
     assert bundle.status_code == 200
     assert 'type="module"' in page.text
-    assert "/web-assets/admin-vue/admin.js?v=admin-vue-5" in page.text
+    assert "/web-assets/admin-vue/admin.js?v=admin-vue-7" in page.text
     assert "admin-vue-root" in shell_script.text
     assert "vueAdminRoutes" in shell_script.text
     assert "按邮箱设置用户" in bundle.text
