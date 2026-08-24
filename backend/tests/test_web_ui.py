@@ -164,7 +164,7 @@ def _rolled_back_test_common_page_data_is_prefetched_cached_and_request_deduplic
     assert "cachedPageApi('/api/v1/admin/users', [])" in script
 
 
-def test_workspace_publishes_both_infinite_canvas_product_surfaces() -> None:
+def test_workspace_only_publishes_the_smart_canvas_product_surface() -> None:
     client = TestClient(create_app(InMemoryAccountAccess()))
 
     page = client.get("/workspace/canvases")
@@ -177,10 +177,11 @@ def test_workspace_publishes_both_infinite_canvas_product_surfaces() -> None:
     assert smart.status_code == 200
     assert "'/workspace/canvases'" in script.text
     assert "'/api/v1/canvases'" in script.text
-    assert "kind: values.get('kind')" in script.text
+    assert "kind: 'smart'" in script.text
+    assert '<option value="classic">' not in script.text
     assert "canvas.kind === 'smart'" in script.text
     assert "/web-assets/saas-canvas-gateway.js" in classic.text
-    assert "/static/js/media-legacy-entry.js?entry=canvas.js" in classic.text
+    assert "entry=smart-canvas.js" in classic.text
     assert 'src="/static/js/canvas.js' not in classic.text
     assert classic.text.index("/web-assets/saas-canvas-gateway.js") < classic.text.index(
         "/static/js/media-legacy-entry.js"
@@ -189,11 +190,10 @@ def test_workspace_publishes_both_infinite_canvas_product_surfaces() -> None:
     assert "/static/js/media-legacy-entry.js" in smart.text
     assert "entry=smart-canvas.js" in smart.text
     assert smart.text.index("/web-assets/saas-canvas-gateway.js") < smart.text.index("/static/js/media-legacy-entry.js")
-    assert "canvas-generation-delivery-2" in classic.text
-    assert "entryVersion=smart-log-open-1" in smart.text
+    assert "entry=smart-canvas.js" in smart.text
 
 
-def test_classic_and_smart_editors_use_the_complete_legacy_assets() -> None:
+def test_legacy_and_smart_routes_keep_the_static_assets_available() -> None:
     client = TestClient(create_app(InMemoryAccountAccess()))
 
     classic = client.get("/workspace/canvases/canvas-1/classic?id=canvas-1")
@@ -536,6 +536,8 @@ def test_saas_canvas_gateway_restores_delivered_images_through_authenticated_med
     assert "/api/v1/generation-tasks/${encodeURIComponent(taskId)}" in gateway.text
     assert "/api/v1/generation-tasks/${encodeURIComponent(taskId)}/media" in gateway.text
     assert "/api/v1/media/${encodeURIComponent(mediaId)}/content" in gateway.text
+    assert "/api/v1/media/${encodeURIComponent(mediaId)}/thumbnail?size=${width}" in gateway.text
+    assert "loadOriginalMedia" in gateway.text
     assert "URL.createObjectURL" in gateway.text
     assert "generatedOutputs" in gateway.text
     assert "media_id" in gateway.text
@@ -596,8 +598,14 @@ async function nativeFetch(input, options = {}) {
       state: 'temporary', expires_at: '2026-08-10T00:00:00Z',
     }]);
   }
-  if (path === '/api/v1/media/media-1/content') {
+  if (path === '/api/v1/media/media-1/thumbnail?size=512') {
     return new Response(new Uint8Array([137, 80, 78, 71]), {
+      status: 200,
+      headers: {'Content-Type': 'image/webp'},
+    });
+  }
+  if (path === '/api/v1/media/media-1/content') {
+    return new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), {
       status: 200,
       headers: {'Content-Type': 'image/png'},
     });
@@ -622,13 +630,22 @@ URL.revokeObjectURL = () => {};
   const sourceNode = canvas.nodes.find(node => node.id === 'source-1');
   const outputNode = canvas.nodes.find(node => node.id === 'output-1');
   const unavailableSource = canvas.nodes.find(node => node.id === 'source-unavailable');
-  assert.deepEqual(sourceNode.generatedOutputs.map(item => [item.media_id, item.url]), [
-    ['media-1', 'blob:authenticated-preview'],
+  assert.deepEqual(sourceNode.generatedOutputs.map(item => [item.media_id, item.url, item.thumbnail]), [
+    ['media-1', '/api/v1/media/media-1/content', 'blob:authenticated-preview'],
   ]);
-  assert.deepEqual(outputNode.images.map(item => [item.media_id, item.url]), [
-    ['media-1', 'blob:authenticated-preview'],
+  assert.deepEqual(outputNode.images.map(item => [item.media_id, item.url, item.thumbnail]), [
+    ['media-1', '/api/v1/media/media-1/content', 'blob:authenticated-preview'],
   ]);
   assert.equal(unavailableSource.generatedOutputs[0].media_id, 'media-existing');
+  assert.equal(calls.filter(call => call.path === '/api/v1/media/media-1/thumbnail?size=512').length, 1);
+  assert.equal(calls.filter(call => call.path.endsWith('/content')).length, 0);
+  const [firstOriginal, secondOriginal] = await Promise.all([
+    window.SaaSCanvasGateway.loadOriginalMedia(sourceNode.generatedOutputs[0]),
+    window.SaaSCanvasGateway.loadOriginalMedia(sourceNode.generatedOutputs[0]),
+  ]);
+  assert.equal(firstOriginal, 'blob:authenticated-preview');
+  assert.equal(secondOriginal, firstOriginal);
+  assert.equal(calls.filter(call => call.path.endsWith('/content')).length, 1);
   assert.ok(calls.filter(call => call.path.startsWith('/api/v1/')).every(
     call => call.authorization === 'Bearer account-token',
   ));
@@ -684,7 +701,7 @@ async function nativeFetch(input) {
     {media_id: 'media-1', task_id: 'task-1', kind: 'image', mime_type: 'image/png', state: 'temporary'},
     {media_id: 'media-2', task_id: 'task-1', kind: 'image', mime_type: 'image/webp', state: 'persistent'},
   ]);
-  if (path.startsWith('/api/v1/media/') && path.endsWith('/content')) {
+  if (path.startsWith('/api/v1/media/') && path.includes('/thumbnail?size=512')) {
     return new Response(new Uint8Array([1, 2, 3]), {status: 200, headers: {'Content-Type': 'image/png'}});
   }
   throw new Error(`unexpected request: ${path}`);
@@ -833,7 +850,7 @@ async function nativeFetch(input) {
   if (path === '/api/v1/generation-tasks/task-running') {
     return json({task_id: 'task-running', status: 'running', quantity: 3});
   }
-  if (path === '/api/v1/media/media-complete/content') {
+  if (path === '/api/v1/media/media-complete/thumbnail?size=512') {
     return new Response(new Uint8Array([1, 2, 3]), {status: 200, headers: {'Content-Type': 'image/png'}});
   }
   throw new Error(`unexpected request: ${path}`);
@@ -980,7 +997,7 @@ async function nativeFetch(input) {
   if (path === '/api/v1/generation-tasks/task-running') {
     return json({task_id: 'task-running', status: 'running', quantity: 1});
   }
-  if (path === '/api/v1/media/media-complete/content') {
+  if (path === '/api/v1/media/media-complete/thumbnail?size=512') {
     return new Response(new Uint8Array([1, 2, 3]), {status: 200, headers: {'Content-Type': 'image/png'}});
   }
   throw new Error(`unexpected request: ${path}`);
@@ -2183,7 +2200,8 @@ def test_canvas_workspace_publishes_safe_create_and_delete_mutations() -> None:
     assert "data-canvas-rename" not in script.text
     assert "data-canvas-delete" in script.text
     assert "confirm_running_tasks=true" in script.text
-    assert "kind: values.get('kind')" in script.text
+    assert "kind: 'smart'" in script.text
+    assert '<option value="classic">' not in script.text
 
 
 def test_python_saas_web_shell_exposes_prompt_only_asset_page() -> None:
@@ -2744,7 +2762,9 @@ def test_canvas_list_uses_stable_creation_order_and_displays_canvas_type() -> No
     assert "Date.parse(right.created_at || '') - Date.parse(left.created_at || '')" in script
     assert "Date.parse(right.updated_at || '') - Date.parse(left.updated_at || '')" not in script
     assert "<th>画布类型</th>" in script
-    assert "canvas.kind === 'smart' ? '智能画布' : '经典画布'" in script
+    assert "已停用（历史数据保留）" in script
+    assert "经典画布入口已取消" in script
+    assert '<option value="classic">' not in script
     assert "<th>画布标识</th>" not in script
     assert "canvas-create-form" in script
     assert "canvas-preview-generating" in script
@@ -2841,6 +2861,8 @@ const classic = canvasesTable([{...common, canvas_id: 'classic-1', title: 'Class
 assert.match(smart, /data-canvas-export="smart-1"/);
 assert.ok(smart.indexOf('data-canvas-export') > smart.indexOf('data-canvas-delete'));
 assert.equal(classic.includes('data-canvas-export'), false);
+assert.equal(classic.includes('data-canvas-open'), false);
+assert.match(classic, /已停用（历史数据保留）/);
 """
 
     result = subprocess.run(

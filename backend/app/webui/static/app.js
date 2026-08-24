@@ -1,6 +1,7 @@
 const app = document.getElementById('app');
 const toastElement = document.getElementById('toast');
 const TOKEN_KEY = 'creative_studio_access_token';
+const ACCOUNT_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const state = {
   route: window.location.pathname,
@@ -9,17 +10,26 @@ const state = {
   balance: null,
   accountSummaryLoaded: false,
   accountSummaryLoadedAt: 0,
+  accountSummaryRefreshPromise: null,
   isAdmin: false,
   adminProviders: [],
+  adminProbeCompleted: false,
   previewUrls: [],
   imageSessionEntries: [],
+  imageHistoryHydrated: false,
   imageHistoryLoading: false,
   referenceMediaEntries: [],
   imageReferenceLimit: 3,
   maskMediaEntry: null,
   referenceMediaLoading: false,
+  referenceMediaHydrated: false,
   canvasPreviewUrls: [],
   canvasPreviewRefreshTimer: null,
+  canvasListCache: null,
+  canvasListCacheAt: 0,
+  navigationEpoch: 0,
+  loadingRoute: '',
+  loadingEpoch: 0,
 };
 
 function escapeHTML(value = '') {
@@ -36,9 +46,66 @@ function toast(message) {
 }
 
 function setToken(token) {
+  const previousToken = state.token;
+  if (!token && previousToken) {
+    state.token = previousToken;
+    clearAccountSummaryCache();
+  }
   state.token = token;
   if (token) window.sessionStorage.setItem(TOKEN_KEY, token);
-  else window.sessionStorage.removeItem(TOKEN_KEY);
+  else {
+    window.sessionStorage.removeItem(TOKEN_KEY);
+  }
+}
+
+function accountSummaryCacheKey() {
+  // Cache entries are partitioned by a short token fingerprint. The token
+  // itself is never copied to localStorage, so another account in the same
+  // browser cannot immediately reuse this account's cached balance.
+  let hash = 2166136261;
+  for (const character of String(state.token || '')) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619) >>> 0;
+  return `creative_studio_account_summary:${hash.toString(16)}`;
+}
+
+function clearAccountSummaryCache() {
+  if (!state.token) return;
+  try { window.localStorage.removeItem(accountSummaryCacheKey()); } catch (_error) { /* storage may be disabled */ }
+}
+
+function hydrateAccountSummaryCache() {
+  if (!state.token || state.user || state.balance) return false;
+  try {
+    const cached = JSON.parse(window.localStorage.getItem(accountSummaryCacheKey()) || 'null');
+    const savedAt = Number(cached?.savedAt || 0);
+    if (!cached?.user || !cached?.balance || !savedAt || Date.now() - savedAt > ACCOUNT_CACHE_TTL_MS) {
+      window.localStorage.removeItem(accountSummaryCacheKey());
+      return false;
+    }
+    state.user = cached.user;
+    state.balance = cached.balance;
+    state.isAdmin = Boolean(cached.isAdmin);
+    state.adminProviders = Array.isArray(cached.adminProviders) ? cached.adminProviders : [];
+    state.adminProbeCompleted = Boolean(cached.adminProbeCompleted);
+    state.accountSummaryLoaded = true;
+    state.accountSummaryLoadedAt = savedAt;
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function persistAccountSummaryCache() {
+  if (!state.token || !state.user || !state.balance) return;
+  try {
+    window.localStorage.setItem(accountSummaryCacheKey(), JSON.stringify({
+      savedAt: state.accountSummaryLoadedAt || Date.now(),
+      user: state.user,
+      balance: state.balance,
+      isAdmin: state.isAdmin,
+      adminProviders: state.adminProviders,
+      adminProbeCompleted: state.adminProbeCompleted,
+    }));
+  } catch (_error) { /* storage may be disabled or full */ }
 }
 
 function errorMessage(payload, status) {
@@ -48,26 +115,64 @@ function errorMessage(payload, status) {
 }
 
 async function api(path, options = {}) {
+  const { timeoutMs = 15_000, ...fetchOptions } = options;
   const headers = new Headers(options.headers || {});
   if (state.token) headers.set('Authorization', `Bearer ${state.token}`);
   const hasFormDataBody = typeof FormData !== 'undefined' && options.body instanceof FormData;
   if (hasFormDataBody) headers.delete('Content-Type');
   else if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-  const response = await window.fetch(path, { ...options, headers });
-  const payload = response.status === 204 ? null : await response.json().catch(() => ({}));
-  if (!response.ok) {
-    if (response.status === 401 && state.token) {
-      setToken(null);
-      state.user = null;
-      state.accountSummaryLoaded = false;
-      state.accountSummaryLoadedAt = 0;
+  const controller = new AbortController();
+  const externalSignal = fetchOptions.signal;
+  let timeoutHandle;
+  let removeExternalAbortListener = null;
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort(externalSignal.reason);
+    else {
+      const abortFromCaller = () => controller.abort(externalSignal.reason);
+      externalSignal.addEventListener('abort', abortFromCaller, { once: true });
+      removeExternalAbortListener = () => externalSignal.removeEventListener('abort', abortFromCaller);
     }
-    const error = new Error(errorMessage(payload, response.status));
-    error.status = response.status;
-    error.payload = payload;
-    throw error;
   }
-  return payload;
+  timeoutHandle = window.setTimeout(() => controller.abort(), Math.max(1_000, Number(timeoutMs) || 15_000));
+  try {
+    const response = await window.fetch(path, { ...fetchOptions, headers, signal: controller.signal });
+    const payload = response.status === 204 ? null : await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 401 && state.token) {
+        setToken(null);
+        state.user = null;
+        state.accountSummaryLoaded = false;
+        state.accountSummaryLoadedAt = 0;
+      }
+      const error = new Error(errorMessage(payload, response.status));
+      error.status = response.status;
+      error.payload = payload;
+      throw error;
+    }
+    return payload;
+  } catch (error) {
+    if (controller.signal.aborted && !externalSignal?.aborted) {
+      const timeoutError = new Error(`请求超时（${Math.round(Math.max(1_000, Number(timeoutMs) || 15_000) / 1000)} 秒），请稍后重试`);
+      timeoutError.status = 408;
+      timeoutError.payload = { detail: timeoutError.message };
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutHandle);
+    removeExternalAbortListener?.();
+  }
+}
+
+function resetImageWorkspaceState() {
+  clearImagePreviewUrls();
+  state.imageSessionEntries = [];
+  state.imageHistoryHydrated = false;
+  state.referenceMediaEntries = [];
+  state.referenceMediaHydrated = false;
+  state.maskMediaEntry = null;
+  state.canvasListCache = null;
+  state.canvasListCacheAt = 0;
 }
 
 async function optionalApi(path, fallback) {
@@ -154,6 +259,8 @@ function authView(mode) {
       state.accountSummaryLoadedAt = 0;
       state.isAdmin = false;
       state.adminProviders = [];
+      state.adminProbeCompleted = false;
+      resetImageWorkspaceState();
       navigate('/workspace/account', { replace: true });
     } catch (error) {
       toast(error.message);
@@ -168,6 +275,41 @@ function navigationItem(label, path, symbol) {
 }
 
 function shell(title, content, pageClass = '') {
+  // Async page loaders can finish after the user has already navigated away.
+  // Reject their late shell writes by associating stable page titles with
+  // routes; otherwise an old “账户” response can overwrite the new image
+  // workbench after navigation.
+  const titleRoutes = {
+    '个人账户': '/workspace/account',
+    '钱包': '/workspace/wallet',
+    '图片生成': '/workspace/images',
+    '局部重绘': '/workspace/inpainting',
+    '无限画布': '/workspace/canvases',
+    'LLM 设置': '/workspace/llm-settings',
+    '提示词库': '/workspace/assets',
+    '素材库管理': '/workspace/assets',
+    '资产库': '/workspace/assets',
+    '生成任务': '/workspace/generations',
+    '模型目录': '/workspace/models',
+    'Provider 成本': '/admin/provider-costs',
+    '模型价格': '/admin/model-routing',
+    '充值包': '/admin/recharge-packages',
+    '兑换码': '/admin/redeem-codes',
+    '任务管理': '/admin/generation-tasks',
+    '用户管理': '/admin/users',
+    '存储额度': '/admin/storage-allowance',
+    '生成容量': '/admin/generation-capacity',
+    '支付设置': '/admin/payment-settings',
+    '邮件设置': '/admin/email-settings',
+    '公告与客服': '/admin/platform-content',
+    'RunningHub 能力目录': '/admin/runninghub-capabilities',
+    '模型路由': '/admin/model-routing',
+  };
+  const expectedRoute = titleRoutes[title];
+  if (expectedRoute && expectedRoute !== state.route) return false;
+  if (state.loadingRoute && (
+    state.loadingRoute !== state.route || state.loadingEpoch !== state.navigationEpoch
+  )) return false;
   window.unmountAdminVue?.();
   const email = state.user?.email || '账户加载中';
   const currentBalance = formatCredits(state.balance?.available_credits);
@@ -192,6 +334,7 @@ function shell(title, content, pageClass = '') {
         ${state.isAdmin ? navigationItem('模型路由', '/admin/model-routing', '路') : ''}
         ${state.isAdmin ? navigationItem('Provider 成本', '/admin/provider-costs', '本') : ''}
         ${state.isAdmin ? navigationItem('充值包', '/admin/recharge-packages', '充') : ''}
+        ${state.isAdmin ? navigationItem('兑换码', '/admin/redeem-codes', '码') : ''}
         ${state.isAdmin ? navigationItem('支付设置', '/admin/payment-settings', '付') : ''}
         ${state.isAdmin ? navigationItem('用户管理', '/admin/users', '户') : ''}
         ${state.isAdmin ? navigationItem('任务管理', '/admin/generation-tasks', '任') : ''}
@@ -220,27 +363,61 @@ function shell(title, content, pageClass = '') {
     state.accountSummaryLoadedAt = 0;
     state.isAdmin = false;
     state.adminProviders = [];
+    state.adminProbeCompleted = false;
+    resetImageWorkspaceState();
     navigate('/login', { replace: true });
   });
+  return true;
 }
 
 function loadingPage(title) {
+  state.loadingRoute = state.route;
+  state.loadingEpoch = state.navigationEpoch;
   shell(title, '<div class="loading">正在读取账户数据…</div>');
 }
 
 async function ensureAccountSummary() {
-  if (state.accountSummaryLoaded && state.user && state.balance
-      && Date.now() - state.accountSummaryLoadedAt < 60_000) return;
-  const [user, balance, providers] = await Promise.all([
+  hydrateAccountSummaryCache();
+  const summaryAge = Date.now() - state.accountSummaryLoadedAt;
+  if (state.accountSummaryLoaded && state.user && state.balance && summaryAge < ACCOUNT_CACHE_TTL_MS) {
+    // The cached account shell is enough to render the next page immediately;
+    // refresh quietly once it is older than one minute.
+    if (summaryAge < 60_000) return;
+    if (!state.accountSummaryRefreshPromise) {
+      state.accountSummaryRefreshPromise = refreshAccountSummary()
+        .catch(error => {
+          if (error.status === 401 || !state.token) navigate('/login', { replace: true });
+        })
+        .finally(() => { state.accountSummaryRefreshPromise = null; });
+    }
+    return;
+  }
+  if (state.accountSummaryRefreshPromise) return state.accountSummaryRefreshPromise;
+  state.accountSummaryRefreshPromise = refreshAccountSummary();
+  try {
+    await state.accountSummaryRefreshPromise;
+  } finally {
+    state.accountSummaryRefreshPromise = null;
+  }
+}
+
+async function refreshAccountSummary() {
+  const [userResult, balanceResult, providersResult] = await Promise.allSettled([
     api('/api/v1/auth/me'),
     api('/api/v1/credits/balance'),
-    detectAdminProviders(),
+    state.adminProbeCompleted ? Promise.resolve(state.adminProviders) : detectAdminProviders(),
   ]);
-  state.user = user;
-  state.balance = balance;
-  state.adminProviders = providers;
+  if (userResult.status === 'rejected') throw userResult.reason;
+  if (balanceResult.status === 'rejected') {
+    if (state.user && state.balance) return;
+    throw balanceResult.reason;
+  }
+  state.user = userResult.value;
+  state.balance = balanceResult.value;
+  if (providersResult.status === 'fulfilled') state.adminProviders = providersResult.value;
   state.accountSummaryLoaded = true;
   state.accountSummaryLoadedAt = Date.now();
+  persistAccountSummaryCache();
 }
 
 function passwordResetRequestPage() {
@@ -355,23 +532,28 @@ async function verifyEmailPage() {
 }
 
 async function detectAdminProviders() {
+  if (state.adminProbeCompleted) return state.adminProviders;
   try {
-    const providers = await api('/api/v1/admin/providers');
+    const providers = await api('/api/v1/admin/providers', { timeoutMs: 5_000 });
     state.isAdmin = true;
+    state.adminProbeCompleted = true;
     return providers;
   } catch (error) {
     if (error.status === 403) {
       state.isAdmin = false;
+      state.adminProbeCompleted = true;
       return [];
     }
     if (error.status === 404) {
       try {
-        await api('/api/v1/admin/runninghub-capabilities');
+        await api('/api/v1/admin/runninghub-capabilities', { timeoutMs: 5_000 });
         state.isAdmin = true;
+        state.adminProbeCompleted = true;
         return [];
       } catch (fallbackError) {
         if (fallbackError.status === 403 || fallbackError.status === 404) {
           state.isAdmin = false;
+          state.adminProbeCompleted = true;
           return [];
         }
         throw fallbackError;
@@ -636,6 +818,8 @@ async function streamGenerationTask(taskId, onMedia = null, onTask = null) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffered = '';
+  let terminalTask = null;
+  let mediaEventSeen = false;
   try {
     while (true) {
       const { value, done } = await reader.read();
@@ -652,13 +836,15 @@ async function streamGenerationTask(taskId, onMedia = null, onTask = null) {
         if (!data) continue;
         const payload = JSON.parse(data);
         if (eventName === 'media') {
+          mediaEventSeen = true;
           if (onMedia) await onMedia(payload);
           continue;
         }
         const task = payload;
         if (onTask) await onTask(task);
-        if (['succeeded', 'failed', 'cancelled'].includes(task.status)) return task;
+        if (['succeeded', 'failed', 'cancelled'].includes(task.status)) terminalTask = task;
       }
+      if (terminalTask && (terminalTask.status !== 'succeeded' || mediaEventSeen || done)) return terminalTask;
       if (done) throw new Error('任务状态连接提前关闭');
     }
   } finally {
@@ -667,7 +853,7 @@ async function streamGenerationTask(taskId, onMedia = null, onTask = null) {
 }
 
 function llmProviderCards(providers) {
-  if (!providers.length) return '<div class="empty">尚未配置 LLM Provider。添加后，经典画布和智能画布会自动显示对应模型。</div>';
+  if (!providers.length) return '<div class="empty">尚未配置 LLM Provider。添加后，智能画布会自动显示对应模型。</div>';
   return `<div class="llm-provider-grid">${providers.map(provider => `<article class="panel llm-provider-card">
     <div class="section-head" style="margin-top:0"><div><h2>${escapeHTML(provider.display_name)}</h2><p>${escapeHTML(provider.code)} · ${provider.enabled ? '已启用' : '已停用'}</p></div><span class="badge">Key ····${escapeHTML(provider.key_fingerprint || '')}</span></div>
     <dl class="detail-list"><div class="detail-row"><dt>API 地址</dt><dd class="mono">${escapeHTML(provider.base_url)}</dd></div><div class="detail-row"><dt>文本模型</dt><dd>${(provider.models || []).map(model => `<span class="llm-model-chip">${escapeHTML(model)}</span>`).join(' ')}</dd></div></dl>
@@ -681,7 +867,7 @@ async function workspaceLLMSettingsPage(editingId = '') {
     await ensureAccountSummary();
     const providers = await api('/api/v1/llm-providers');
     const editing = providers.find(provider => provider.id === editingId);
-    shell('LLM 设置', `<div class="page-head"><div><h1>LLM 设置</h1><p>配置您自己的文本模型 API，仅供当前账户的经典画布和智能画布使用。生图 Provider 仍由平台统一管理。</p></div></div>
+    shell('LLM 设置', `<div class="page-head"><div><h1>LLM 设置</h1><p>配置您自己的文本模型 API，仅供当前账户的智能画布使用。生图 Provider 仍由平台统一管理。</p></div></div>
       <section class="panel"><div class="section-head" style="margin-top:0"><div><h2>${editing ? '编辑 LLM Provider' : '添加 LLM Provider'}</h2><p>支持 OpenAI-compatible /chat/completions。API Key 保存后不会返回明文。</p></div></div>
         <form id="llm-provider-form" class="admin-form-grid">
           <div class="field"><label>Provider 代码</label><input name="code" required maxlength="64" value="${escapeHTML(editing?.code || '')}" placeholder="openai"></div>
@@ -766,6 +952,31 @@ function clearCanvasPreviewUrls() {
   state.canvasPreviewUrls = [];
 }
 
+function canvasListCacheKey() {
+  return `${accountSummaryCacheKey()}:canvases`;
+}
+
+function readCanvasListCache() {
+  if (state.canvasListCache && Date.now() - state.canvasListCacheAt < ACCOUNT_CACHE_TTL_MS) return state.canvasListCache;
+  try {
+    const cached = JSON.parse(window.localStorage.getItem(canvasListCacheKey()) || 'null');
+    if (!Array.isArray(cached?.canvases) || Date.now() - Number(cached.savedAt || 0) > ACCOUNT_CACHE_TTL_MS) return null;
+    state.canvasListCache = cached.canvases;
+    state.canvasListCacheAt = Number(cached.savedAt || Date.now());
+    return state.canvasListCache;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function persistCanvasListCache(canvases) {
+  state.canvasListCache = canvases;
+  state.canvasListCacheAt = Date.now();
+  try {
+    window.localStorage.setItem(canvasListCacheKey(), JSON.stringify({ savedAt: state.canvasListCacheAt, canvases }));
+  } catch (_error) { /* storage may be disabled or full */ }
+}
+
 async function authenticatedCanvasPreviewUrl(media) {
   const headers = new Headers({ Authorization: `Bearer ${state.token}` });
   const response = await window.fetch(`/api/v1/media/${encodeURIComponent(media.media_id)}/content`, { headers });
@@ -811,15 +1022,86 @@ function canvasesTable(canvases, previews = new Map()) {
     <td><strong>${escapeHTML(canvas.title || '未命名画布')}</strong></td>
     <td>${escapeHTML(canvas.version)}</td>
     <td>${formatDate(canvas.updated_at)}</td>
-    <td>${canvas.kind === 'smart' ? '智能画布' : '经典画布'}</td>
-    <td><div class="row-actions"><button class="primary-btn" type="button" data-canvas-open="${escapeHTML(canvas.canvas_id)}" data-canvas-kind="${escapeHTML(canvas.kind)}">打开画布</button><button class="danger-btn" type="button" data-canvas-delete="${escapeHTML(canvas.canvas_id)}" data-canvas-title="${escapeHTML(canvas.title || '未命名画布')}">永久删除</button>${canvas.kind === 'smart' ? `<button class="secondary-btn" type="button" data-canvas-export="${escapeHTML(canvas.canvas_id)}" data-canvas-title="${escapeHTML(canvas.title || '未命名画布')}">导出</button>` : ''}</div></td>
+    <td>${canvas.kind === 'smart' ? '智能画布' : '<span class="status">已停用（历史数据保留）</span>'}</td>
+    <td><div class="row-actions">${canvas.kind === 'smart' ? `<button class="primary-btn" type="button" data-canvas-open="${escapeHTML(canvas.canvas_id)}" data-canvas-kind="smart">打开画布</button>` : '<span class="image-edit-sub">经典画布入口已取消</span>'}<button class="danger-btn" type="button" data-canvas-delete="${escapeHTML(canvas.canvas_id)}" data-canvas-title="${escapeHTML(canvas.title || '未命名画布')}">${canvas.kind === 'smart' ? '永久删除' : '删除历史画布'}</button>${canvas.kind === 'smart' ? `<button class="secondary-btn" type="button" data-canvas-export="${escapeHTML(canvas.canvas_id)}" data-canvas-title="${escapeHTML(canvas.title || '未命名画布')}">导出</button>` : ''}</div></td>
   </tr>`).join('')}</tbody></table></div>`;
 }
 
 function canvasEditorUrl(canvasId, kind) {
   const encoded = encodeURIComponent(canvasId);
-  const editor = kind === 'smart' ? 'smart' : 'classic';
-  return `/workspace/canvases/${encoded}/${editor}?id=${encoded}`;
+  // 经典画布已停止提供新入口；保留 kind 参数只为兼容旧调用方，
+  // 所有可打开的画布统一进入当前智能画布编辑器。
+  return `/workspace/canvases/${encoded}/smart?id=${encoded}`;
+}
+
+function canvasWorkspaceContent(canvases, previews = new Map()) {
+  return `<div class="page-head"><div><h1>无限画布</h1><p>在可缩放画布中组织图片、提示词和生成节点。画布与媒体仅属于当前账户空间。</p></div></div>
+    <section class="panel"><div class="section-head" style="margin-top:0"><div><h2>新建画布</h2><p>首版开放图片、提示词、循环、平台生图和输出节点；其他本地 Provider 能力暂不开放。</p></div></div>
+      <form class="canvas-create-form" id="canvas-create-form"><div class="field canvas-title-field"><label for="canvas-title">画布名称</label><input id="canvas-title" name="title" maxlength="80" required placeholder="例如：夏季主视觉"></div><div class="field canvas-kind-field"><label for="canvas-kind">画布类型</label><input id="canvas-kind" type="text" value="智能画布" readonly aria-describedby="canvas-kind-hint"><small id="canvas-kind-hint" class="image-edit-sub">经典画布已停止创建；历史数据仍保留。</small></div><button class="primary-btn" type="submit">创建并打开</button></form>
+    </section>
+    <section class="panel"><div class="section-head" style="margin-top:0"><div><h2>我的画布</h2><p>保存采用版本校验，避免不同浏览器窗口静默覆盖彼此的修改。</p></div><button class="secondary-btn" type="button" data-canvas-refresh>刷新</button></div>${canvasesTable(canvases, previews)}</section>`;
+}
+
+function bindCanvasListActions() {
+  document.getElementById('canvas-create-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector('[type="submit"]');
+    const values = new FormData(form);
+    button.disabled = true;
+    try {
+      const canvas = await api('/api/v1/canvases', {
+        method: 'POST',
+        body: JSON.stringify({ title: values.get('title'), kind: 'smart' }),
+      });
+      window.location.assign(canvasEditorUrl(canvas.canvas_id, canvas.kind));
+    } catch (error) {
+      toast(error.message);
+      button.disabled = false;
+    }
+  });
+  document.querySelectorAll('[data-canvas-open]').forEach(button => button.addEventListener('click', () => {
+    window.location.assign(canvasEditorUrl(button.dataset.canvasOpen, button.dataset.canvasKind));
+  }));
+  document.querySelectorAll('[data-canvas-export]').forEach(button => button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      await exportSmartCanvasFromList(button.dataset.canvasExport, button.dataset.canvasTitle);
+      toast('智能画布工作流已导出');
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  }));
+  document.querySelectorAll('[data-canvas-delete]').forEach(button => button.addEventListener('click', async () => {
+    if (!await centeredDeleteConfirm(`确认不可恢复地删除“${button.dataset.canvasTitle}”吗？`)) return;
+    button.disabled = true;
+    try {
+      await deleteCanvas(button.dataset.canvasDelete);
+      toast('画布已删除');
+      await workspaceCanvasesPage();
+    } catch (error) {
+      const detail = error.payload?.detail;
+      if (error.status === 409 && detail?.confirm_required) {
+        const confirmed = await centeredDeleteConfirm(detail.message || '画布仍有任务运行，是否继续删除？');
+        if (confirmed) {
+          try {
+            await deleteCanvas(button.dataset.canvasDelete, true);
+            toast('画布已删除，运行中的任务将继续执行');
+            await workspaceCanvasesPage();
+            return;
+          } catch (confirmedError) {
+            toast(confirmedError.message);
+          }
+        }
+      } else {
+        toast(error.message);
+      }
+      button.disabled = false;
+    }
+  }));
+  document.querySelector('[data-canvas-refresh]')?.addEventListener('click', () => workspaceCanvasesPage());
 }
 
 async function deleteCanvas(canvasId, confirmRunningTasks = false) {
@@ -870,7 +1152,14 @@ async function exportSmartCanvasFromList(canvasId, title) {
 }
 
 async function workspaceCanvasesPage({ background = false } = {}) {
-  if (!background) loadingPage('无限画布');
+  if (!background) {
+    loadingPage('无限画布');
+    const cachedCanvases = readCanvasListCache();
+    if (cachedCanvases) {
+      shell('无限画布', canvasWorkspaceContent(cachedCanvases));
+      bindCanvasListActions();
+    }
+  }
   try {
     window.clearTimeout(state.canvasPreviewRefreshTimer);
     state.canvasPreviewRefreshTimer = null;
@@ -882,11 +1171,9 @@ async function workspaceCanvasesPage({ background = false } = {}) {
         return createdDifference || String(right.canvas_id || '').localeCompare(String(left.canvas_id || ''));
       });
     const previews = await loadCanvasPreviews(canvases);
-    shell('无限画布', `<div class="page-head"><div><h1>无限画布</h1><p>在可缩放画布中组织图片、提示词和生成节点。画布与媒体仅属于当前账户空间。</p></div></div>
-      <section class="panel"><div class="section-head" style="margin-top:0"><div><h2>新建画布</h2><p>首版开放图片、提示词、循环、平台生图和输出节点；其他本地 Provider 能力暂不开放。</p></div></div>
-        <form class="canvas-create-form" id="canvas-create-form"><div class="field canvas-title-field"><label for="canvas-title">画布名称</label><input id="canvas-title" name="title" maxlength="80" required placeholder="例如：夏季主视觉"></div><div class="field canvas-kind-field"><label for="canvas-kind">画布类型</label><select id="canvas-kind" name="kind"><option value="classic">经典画布</option><option value="smart">智能画布</option></select></div><button class="primary-btn" type="submit">创建并打开</button></form>
-      </section>
-      <section class="panel"><div class="section-head" style="margin-top:0"><div><h2>我的画布</h2><p>保存采用版本校验，避免不同浏览器窗口静默覆盖彼此的修改。</p></div><button class="secondary-btn" type="button" data-canvas-refresh>刷新</button></div>${canvasesTable(canvases, previews)}</section>`);
+    persistCanvasListCache(canvases);
+    shell('无限画布', canvasWorkspaceContent(canvases, previews));
+    bindCanvasListActions();
 
     if ([...previews.values()].some(preview => preview.status === 'generating')) {
       state.canvasPreviewRefreshTimer = window.setTimeout(() => {
@@ -894,65 +1181,6 @@ async function workspaceCanvasesPage({ background = false } = {}) {
       }, 4000);
     }
 
-    document.getElementById('canvas-create-form').addEventListener('submit', async event => {
-      event.preventDefault();
-      const form = event.currentTarget;
-      const button = form.querySelector('[type="submit"]');
-      const values = new FormData(form);
-      button.disabled = true;
-      try {
-        const canvas = await api('/api/v1/canvases', {
-          method: 'POST',
-          body: JSON.stringify({ title: values.get('title'), kind: values.get('kind') }),
-        });
-        window.location.assign(canvasEditorUrl(canvas.canvas_id, canvas.kind));
-      } catch (error) {
-        toast(error.message);
-        button.disabled = false;
-      }
-    });
-    document.querySelectorAll('[data-canvas-open]').forEach(button => button.addEventListener('click', () => {
-      window.location.assign(canvasEditorUrl(button.dataset.canvasOpen, button.dataset.canvasKind));
-    }));
-    document.querySelectorAll('[data-canvas-export]').forEach(button => button.addEventListener('click', async () => {
-      button.disabled = true;
-      try {
-        await exportSmartCanvasFromList(button.dataset.canvasExport, button.dataset.canvasTitle);
-        toast('智能画布工作流已导出');
-      } catch (error) {
-        toast(error.message);
-      } finally {
-        button.disabled = false;
-      }
-    }));
-    document.querySelectorAll('[data-canvas-delete]').forEach(button => button.addEventListener('click', async () => {
-      if (!await centeredDeleteConfirm(`确认不可恢复地删除“${button.dataset.canvasTitle}”吗？`)) return;
-      button.disabled = true;
-      try {
-        await deleteCanvas(button.dataset.canvasDelete);
-        toast('画布已删除');
-        await workspaceCanvasesPage();
-      } catch (error) {
-        const detail = error.payload?.detail;
-        if (error.status === 409 && detail?.confirm_required) {
-          const confirmed = await centeredDeleteConfirm(detail.message || '画布仍有任务运行，是否继续删除？');
-          if (confirmed) {
-            try {
-              await deleteCanvas(button.dataset.canvasDelete, true);
-              toast('画布已删除，运行中的任务将继续执行');
-              await workspaceCanvasesPage();
-              return;
-            } catch (confirmedError) {
-              toast(confirmedError.message);
-            }
-          }
-        } else {
-          toast(error.message);
-        }
-        button.disabled = false;
-      }
-    }));
-    document.querySelector('[data-canvas-refresh]')?.addEventListener('click', () => workspaceCanvasesPage());
   } catch (error) {
     if (!state.token) return navigate('/login', { replace: true });
     shell('无限画布', `<div class="empty">${escapeHTML(error.message)}</div>`);
@@ -1059,31 +1287,74 @@ function clearImagePreviewUrls() {
   state.previewUrls = [];
 }
 
-async function authenticatedMediaObjectUrl(media) {
+async function mapWithConcurrency(items, limit, mapper) {
+  const values = Array.from(items || []);
+  if (!values.length) return [];
+  const results = new Array(values.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(values[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, limit), values.length) }, worker));
+  return results;
+}
+
+async function authenticatedMediaObjectUrl(media, { thumbnail = false, timeoutMs = 8_000 } = {}) {
   const headers = new Headers();
   headers.set('Authorization', `Bearer ${state.token}`);
-  const response = await window.fetch(`/api/v1/media/${encodeURIComponent(media.media_id)}/content`, { headers });
+  const endpoint = thumbnail
+    ? `/api/v1/media/${encodeURIComponent(media.media_id)}/thumbnail?size=512`
+    : `/api/v1/media/${encodeURIComponent(media.media_id)}/content`;
+  const controller = new AbortController();
+  const timeoutHandle = window.setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await window.fetch(endpoint, { headers, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeoutHandle);
+  }
   if (!response.ok) throw new Error('图片内容当前不可用');
   const url = window.URL.createObjectURL(await response.blob());
   state.previewUrls.push(url);
   return url;
 }
 
-async function authenticatedReferenceObjectUrl(media) {
+async function authenticatedReferenceObjectUrl(media, { thumbnail = false, timeoutMs = 8_000 } = {}) {
   const headers = new Headers();
   headers.set('Authorization', `Bearer ${state.token}`);
-  const response = await window.fetch(media.preview_url, { headers });
+  const rawPreviewUrl = String(media.preview_url || '');
+  const endpoint = thumbnail && media.media_id
+    ? `/api/v1/reference-media/${encodeURIComponent(media.media_id)}/thumbnail?size=512`
+    : rawPreviewUrl;
+  const controller = new AbortController();
+  const timeoutHandle = window.setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await window.fetch(endpoint, { headers, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeoutHandle);
+  }
   if (!response.ok) throw new Error('参考图片当前不可用');
   const url = window.URL.createObjectURL(await response.blob());
   state.previewUrls.push(url);
   return url;
 }
 
+async function loadOriginalReferenceUrl(media) {
+  if (!media) return '';
+  if (!media.originalUrl) media.originalUrl = await authenticatedReferenceObjectUrl(media);
+  return media.originalUrl;
+}
+
 async function restoreRecentReferenceMedia() {
   state.referenceMediaLoading = true;
   renderReferenceMediaList();
   try {
-    const recent = await optionalApi('/api/v1/reference-media/recent', []);
+    const recent = (await optionalApi('/api/v1/reference-media/recent?limit=12', [])).slice(0, 12);
     const savedMaskId = window.localStorage.getItem(imageMaskMediaKey()) || '';
     if (!state.route || isImageWorkspaceRoute()) {
       state.referenceMediaEntries = recent.filter(media => media.media_id !== savedMaskId)
@@ -1092,9 +1363,9 @@ async function restoreRecentReferenceMedia() {
       state.maskMediaEntry = savedMask ? { ...savedMask, previewUrl: '' } : null;
       if (!savedMask) window.localStorage.removeItem(imageMaskMediaKey());
     }
-    void Promise.all(recent.map(async media => {
+    void mapWithConcurrency(recent, 3, async media => {
       try {
-        const previewUrl = await authenticatedReferenceObjectUrl(media);
+        const previewUrl = await authenticatedReferenceObjectUrl(media, { thumbnail: true });
         if (state.route && !isImageWorkspaceRoute()) {
           window.URL.revokeObjectURL(previewUrl);
           state.previewUrls = state.previewUrls.filter(url => url !== previewUrl);
@@ -1116,9 +1387,10 @@ async function restoreRecentReferenceMedia() {
           renderMaskMedia();
         }
       }
-    }));
+    });
   } finally {
     state.referenceMediaLoading = false;
+    state.referenceMediaHydrated = true;
     if (!state.route || isImageWorkspaceRoute()) renderReferenceMediaList();
     if (!state.route || isImageWorkspaceRoute()) renderMaskMedia();
   }
@@ -1187,7 +1459,12 @@ function renderReferenceMediaList() {
         const button = event.target.closest('[data-reference-expand]');
         if (!button || !container.contains(button)) return;
         const media = state.referenceMediaEntries.find(item => item.media_id === button.dataset.referenceExpand);
-        if (media?.previewUrl) openImageLightbox(media.previewUrl, `参考图 ${media.original_name}`);
+        if (!media?.previewUrl) return;
+        button.disabled = true;
+        loadOriginalReferenceUrl(media)
+          .then(url => openImageLightbox(url, `参考图 ${media.original_name}`))
+          .catch(error => toast(error.message || '原图暂时无法加载'))
+          .finally(() => { button.disabled = false; });
       });
     }
   }
@@ -1241,7 +1518,7 @@ async function uploadSelectedReferenceFiles(files) {
       },
       body: file,
     });
-    state.referenceMediaEntries.push({ ...media, previewUrl: await authenticatedReferenceObjectUrl(media) });
+    state.referenceMediaEntries.push({ ...media, previewUrl: await authenticatedReferenceObjectUrl(media, { thumbnail: true }) });
     renderReferenceMediaList();
   }
 }
@@ -1438,6 +1715,24 @@ async function deleteImageMedia(mediaId) {
 }
 
 async function restoreRecentImageResults() {
+  // Keep this restore routine independently testable and resilient when a
+  // cached script evaluates only the workspace function.
+  const runBounded = typeof mapWithConcurrency === 'function'
+    ? mapWithConcurrency
+    : async (items, limit, mapper) => {
+      const values = Array.from(items || []);
+      const results = new Array(values.length);
+      let nextIndex = 0;
+      const worker = async () => {
+        while (nextIndex < values.length) {
+          const index = nextIndex;
+          nextIndex += 1;
+          results[index] = await mapper(values[index], index);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(Math.max(1, limit), values.length) }, worker));
+      return results;
+    };
   clearImagePreviewUrls();
   state.imageSessionEntries = [];
   state.imageHistoryLoading = true;
@@ -1446,13 +1741,20 @@ async function restoreRecentImageResults() {
     const recentTasks = await optionalApi('/api/v1/generation-tasks/recent?limit=100', []);
     const standaloneTasks = recentTasks
       .filter(task => task.canvas_id === null && ['queued', 'running', 'succeeded'].includes(task.status))
+      // Restoring every historical task also downloads every result just to
+      // paint the first screen. Keep the API's compatibility limit at 100, but
+      // only hydrate the newest 24 standalone tasks in the workbench.
+      .slice(0, 24)
       .reverse();
     let nextNumber = 1;
-    const entryPromises = standaloneTasks.map(task => {
+    const taskEntries = standaloneTasks.map(task => {
       const startNumber = nextNumber;
       const quantity = Math.max(1, Number(task.quantity) || 1);
       nextNumber += quantity;
-      if (['queued', 'running'].includes(task.status)) return Promise.resolve({
+      return { task, startNumber, quantity };
+    });
+    const entries = (await runBounded(taskEntries, 4, async ({ task, startNumber, quantity }) => {
+      if (['queued', 'running'].includes(task.status)) return {
         taskId: task.task_id,
         status: 'pending',
         taskStatus: task.status,
@@ -1463,19 +1765,25 @@ async function restoreRecentImageResults() {
         params: task.params || {},
         createdAt: task.created_at,
         media: [],
-      });
-      return (async () => {
+      };
+      try {
         const taskMedia = await optionalApi(`/api/v1/generation-tasks/${encodeURIComponent(task.task_id)}/media`, []);
         const available = taskMedia.filter(item => item.state === 'temporary'
           && (!item.expires_at || new Date(item.expires_at).getTime() > Date.now()));
-        const restored = await Promise.all(available.map(async (item, index) => {
+        const restored = await runBounded(available, 4, async (item, index) => {
           try {
-            return { ...item, sessionNumber: startNumber + index, previewUrl: await authenticatedMediaObjectUrl(item) };
+            return {
+              ...item,
+              sessionNumber: startNumber + index,
+              // The workbench always paints a bounded thumbnail. The original
+              // bytes are fetched only when the user opens or downloads one.
+              previewUrl: await authenticatedMediaObjectUrl(item, { thumbnail: true }),
+            };
           } catch (_error) {
             // An expired or concurrently deleted object is simply absent from the restored 24-hour workspace.
             return null;
           }
-        }));
+        });
         const media = restored.filter(Boolean);
         return media.length ? {
           taskId: task.task_id,
@@ -1488,9 +1796,11 @@ async function restoreRecentImageResults() {
           createdAt: task.created_at,
           media,
         } : null;
-      })();
-    });
-    const entries = (await Promise.all(entryPromises)).filter(Boolean);
+      } catch (_error) {
+        // A single stale task must not prevent the workbench from opening.
+        return null;
+      }
+    })).filter(Boolean);
     if (state.route && !isImageWorkspaceRoute()) return;
     let nextLiveNumber = entries.reduce((total, entry) => total + entry.quantity, 0) + 1;
     const restoredTaskIds = new Set(entries.map(entry => entry.taskId));
@@ -1509,6 +1819,7 @@ async function restoreRecentImageResults() {
       .forEach(entry => { void observeImageSessionTask(entry); });
   } finally {
     state.imageHistoryLoading = false;
+    state.imageHistoryHydrated = true;
     if (!state.route || isImageWorkspaceRoute()) {
       if (typeof renderImageSessionResults === 'function') renderImageSessionResults();
     }
@@ -1567,7 +1878,7 @@ async function uploadMaskFile(file) {
   const upload = new FormData();
   upload.append('file', file, file.name);
   const media = await api('/api/v1/reference-media', { method: 'POST', body: upload });
-  state.maskMediaEntry = { ...media, previewUrl: await authenticatedReferenceObjectUrl(media) };
+  state.maskMediaEntry = { ...media, previewUrl: await authenticatedReferenceObjectUrl(media, { thumbnail: true }) };
   window.localStorage.setItem(imageMaskMediaKey(), media.media_id);
   renderMaskMedia();
 }
@@ -1648,8 +1959,11 @@ function bindImageMaskEditor() {
     if (!source) return toast('请先上传待编辑原图');
     if (!source.previewUrl) return toast('原图正在加载，请稍后再试');
     try {
-      const loaded = await loadMaskEditorImage(source.previewUrl);
-      image.src = source.previewUrl;
+      // Reference cards use a thumbnail; the editor is the explicit point at
+      // which the single original image is fetched.
+      const originalUrl = await loadOriginalReferenceUrl(source);
+      const loaded = await loadMaskEditorImage(originalUrl);
+      image.src = originalUrl;
       canvas.width = loaded.naturalWidth; canvas.height = loaded.naturalHeight;
       context().clearRect(0, 0, canvas.width, canvas.height);
       history = []; updateUndo(); editor.hidden = false;
@@ -1713,7 +2027,7 @@ async function completeImageSessionEntry(entry, task) {
     entry.media = await Promise.all(media.map(async (item, index) => ({
       ...item,
       sessionNumber: entry.startNumber + index,
-      previewUrl: await authenticatedMediaObjectUrl(item),
+      previewUrl: await authenticatedMediaObjectUrl(item, { thumbnail: true }),
     })));
   }
   entry.status = 'succeeded';
@@ -1731,10 +2045,16 @@ async function updateImageSessionMedia(entry, media) {
   const hydrated = await Promise.all(additions.map(async (item, index) => ({
     ...item,
     sessionNumber: entry.startNumber + startOffset + index,
-    previewUrl: await authenticatedMediaObjectUrl(item),
+    previewUrl: await authenticatedMediaObjectUrl(item, { thumbnail: true }),
   })));
   entry.media = [...(entry.media || []), ...hydrated];
   renderImageSessionResults();
+}
+
+async function loadOriginalMediaUrl(media) {
+  if (!media) return '';
+  if (!media.originalUrl) media.originalUrl = await authenticatedMediaObjectUrl(media);
+  return media.originalUrl;
 }
 
 async function observeImageSessionTask(entry) {
@@ -1813,9 +2133,13 @@ function openImageLightbox(source, alt) {
 }
 
 function bindImageSessionActions() {
-  app.querySelectorAll('[data-image-download]').forEach(button => { button.onclick = () => {
+  app.querySelectorAll('[data-image-download]').forEach(button => { button.onclick = async () => {
     const media = sessionMedia().find(item => item.sessionNumber === Number(button.dataset.imageDownload));
-    if (media) triggerImageDownload(media.previewUrl, imageFilename(media));
+    if (!media) return;
+    button.disabled = true;
+    try { triggerImageDownload(await loadOriginalMediaUrl(media), imageFilename(media)); }
+    catch (error) { toast(error.message || '原图暂时无法加载'); }
+    finally { button.disabled = false; }
   }; });
   const lightbox = app.querySelector('[data-image-lightbox]');
   const lightboxStage = lightbox?.querySelector('[data-image-lightbox-stage]');
@@ -1832,9 +2156,13 @@ function bindImageSessionActions() {
     transform.y = 0;
     applyLightboxTransform();
   };
-  app.querySelectorAll('[data-image-expand]').forEach(button => { button.onclick = () => {
+  app.querySelectorAll('[data-image-expand]').forEach(button => { button.onclick = async () => {
     const media = sessionMedia().find(item => item.sessionNumber === Number(button.dataset.imageExpand));
-    if (media) openImageLightbox(media.previewUrl, `生成结果 #${media.sessionNumber}`);
+    if (!media) return;
+    button.disabled = true;
+    try { openImageLightbox(await loadOriginalMediaUrl(media), `生成结果 #${media.sessionNumber}`); }
+    catch (error) { toast(error.message || '原图暂时无法加载'); }
+    finally { button.disabled = false; }
   }; });
   if (lightboxStage && !lightboxStage._imageInteractionBound) {
     lightboxStage._imageInteractionBound = true;
@@ -1892,7 +2220,7 @@ function bindImageSessionActions() {
     button.disabled = true;
     try {
       const reference = await api(`/api/v1/media/${encodeURIComponent(button.dataset.imageUseReference)}/use-as-reference`, { method: 'POST' });
-      state.referenceMediaEntries.push({ ...reference, previewUrl: await authenticatedReferenceObjectUrl(reference) });
+      state.referenceMediaEntries.push({ ...reference, previewUrl: await authenticatedReferenceObjectUrl(reference, { thumbnail: true }) });
       renderReferenceMediaList();
       toast('已添加为参考图');
     } catch (error) {
@@ -2063,7 +2391,7 @@ function workspaceImagesPage(forcedOperation = '') {
       if (summary) summary.textContent = `${isCustom ? `${width || '—'} × ${height || '—'}` : imageSizeByOutput[`${tier}|${ratio}`]} · ${isCustom ? '自定义' : tier.toUpperCase()} · ${format.toUpperCase()}`;
       if (button) {
         const ready = form.dataset.imageFormReady === 'true';
-        button.textContent = ready ? `✦ 生成 ${quantity} 张图片` : '正在加载模型…';
+        button.textContent = ready ? `✦ 生成 ${quantity} 张图片（Ctrl + Enter）` : '正在加载模型…';
         button.disabled = !ready;
       }
     };
@@ -2081,13 +2409,21 @@ function workspaceImagesPage(forcedOperation = '') {
     });
     updateOutputSummary();
     updateOperationUI();
+    const promptInput = form?.querySelector('[name="prompt"]');
+    promptInput?.addEventListener('keydown', event => {
+      if (event.isComposing || !event.ctrlKey || event.key !== 'Enter') return;
+      const button = form.querySelector('[data-image-generate-button]');
+      if (!button || button.disabled) return;
+      event.preventDefault();
+      form.requestSubmit(button);
+    });
     renderReferenceMediaList();
     renderMaskMedia();
     bindImageSessionActions();
-    void Promise.all([
-      restoreRecentImageResults(),
-      restoreRecentReferenceMedia(),
-    ]).catch(error => {
+    const restores = [];
+    if (!state.imageHistoryHydrated) restores.push(restoreRecentImageResults());
+    if (!state.referenceMediaHydrated) restores.push(restoreRecentReferenceMedia());
+    void Promise.all(restores).catch(error => {
       if (isImageWorkspaceRoute()) toast(error.message || '最近图片暂时无法恢复');
     });
     void Promise.all([
@@ -2221,7 +2557,7 @@ function generationTaskSourceLabel(task, canvasesById) {
   if (!task.canvas_id) return '文生图';
   const canvas = canvasesById.get(task.canvas_id);
   if (!canvas) return '已删除画布';
-  const kind = canvas.kind === 'smart' ? '智能画布' : '经典画布';
+  const kind = canvas.kind === 'smart' ? '智能画布' : '已停用画布';
   return `“${canvas.title || '未命名画布'}”-${kind}`;
 }
 
@@ -2633,7 +2969,7 @@ function adminSelectedUserPanel(user) {
   if (!user) return '<div class="empty admin-user-search-empty">输入完整邮箱并点击查找，再进行充值或并发设置。</div>';
   return `<div class="admin-selected-user-head"><div><strong>${escapeHTML(user.email)}</strong><span class="status ${user.email_verified ? 'healthy' : 'unknown'}">${user.email_verified ? '邮箱已验证' : '邮箱未验证'}</span></div><div>可用额度 <b>${formatCredits(user.available_credits)}</b> · 冻结额度 <b>${formatCredits(user.frozen_credits)}</b></div></div>
     <div class="admin-user-control-grid">
-      <form data-admin-generation-limit="${escapeHTML(user.user_id)}" class="admin-user-control-card"><div><strong>设置生成并发</strong><small>允许 1–20，超出任务继续排队。</small></div><div class="row-actions"><input name="execution_concurrency" type="number" min="1" max="20" value="${Number(user.generation_execution_concurrency || 2)}" required aria-label="单用户执行并发数"><button class="secondary-btn" type="submit">保存并发</button></div></form>
+      <form data-admin-generation-limit="${escapeHTML(user.user_id)}" class="admin-user-control-card"><div><strong>设置生成并发</strong><small>允许 1–50，超出任务继续排队。</small></div><div class="row-actions"><input name="execution_concurrency" type="number" min="1" max="50" value="${Number(user.generation_execution_concurrency || 2)}" required aria-label="单用户执行并发数"><button class="secondary-btn" type="submit">保存并发</button></div></form>
       <form data-admin-credit-grant="${escapeHTML(user.user_id)}" class="admin-user-control-card"><div><strong>人工充值</strong><small>充值会形成永久账务记录。</small></div><div class="row-actions"><input name="credits" type="number" min="0.0001" step="0.0001" required placeholder="额度"><input name="reason" required maxlength="255" placeholder="充值原因"><button class="primary-btn" type="submit">确认充值</button></div></form>
     </div><button class="text-btn" type="button" data-recharge-records="${escapeHTML(user.user_id)}" data-user-email="${escapeHTML(user.email)}">查看此用户充值记录</button><div id="admin-recharge-records"></div>`;
 }
@@ -3277,7 +3613,7 @@ async function adminRoutingPage() {
           <div class="field span-two"><label>API 基础地址</label><input name="base_url" type="url" required placeholder="https://example.com/v1"></div>
           <div class="field"><label>图片响应模式</label><select name="image_response_mode"><option value="auto">自动兼容（推荐）</option><option value="sync_json">同步 JSON</option><option value="sse">SSE 流式</option><option value="async_task">异步 task_id</option></select></div>
           <div class="field"><label>上游账户共享组</label><input name="concurrency_group" required placeholder="例如 originboost-main"></div>
-          <div class="field"><label>账户共享并发数</label><input name="max_concurrency" type="number" min="1" max="1000" value="20" required></div>
+          <div class="field"><label>账户共享并发数</label><input name="max_concurrency" type="number" min="1" max="1000" value="50" required></div>
           <div class="field"><label>上游请求超时（秒）</label><input name="request_timeout_seconds" type="number" min="60" max="1800" value="600" required><small>这是绝对时限，SSE 心跳不会延长；应小于或等于任务自动截止时间。</small></div>
           <div class="field span-two"><label>API Key（只写）</label><input name="api_key" type="password" autocomplete="new-password" required placeholder="保存后不可读取"></div>
           <div class="row-actions"><button class="primary-btn" type="submit">保存来源</button><button class="secondary-btn" id="provider-form-reset" type="button" hidden>取消编辑</button></div>
@@ -3499,6 +3835,7 @@ const vueAdminRoutes = new Set([
   '/admin/model-routing',
   '/admin/provider-costs',
   '/admin/recharge-packages',
+  '/admin/redeem-codes',
   '/admin/payment-settings',
   '/admin/runninghub-capabilities',
 ]);
@@ -3513,6 +3850,7 @@ const vueAdminTitles = {
   '/admin/model-routing': '模型路由',
   '/admin/provider-costs': 'Provider 成本',
   '/admin/recharge-packages': '充值包',
+  '/admin/redeem-codes': '兑换码',
   '/admin/payment-settings': '支付设置',
   '/admin/runninghub-capabilities': 'RunningHub 能力目录',
 };
@@ -3554,6 +3892,7 @@ function createVueBridge() {
       state.user = null;
       state.balance = null;
       state.accountSummaryLoaded = false;
+      resetImageWorkspaceState();
       toast(message);
       navigate('/login', { replace: true });
     },
@@ -3611,17 +3950,19 @@ async function workspaceVuePage() {
 
 function render() {
   state.route = window.location.pathname;
+  state.navigationEpoch += 1;
+  // A navigation invalidates the previous page's account-loading placeholder.
+  // Without clearing these markers, a synchronous workbench route (images and
+  // inpainting) can be rejected by shell() as an obsolete render and leave the
+  // previous page stuck on “正在读取账户数据…”.
+  state.loadingRoute = '';
+  state.loadingEpoch = 0;
   if (state.route !== '/workspace/canvases') {
     window.clearTimeout(state.canvasPreviewRefreshTimer);
     state.canvasPreviewRefreshTimer = null;
     clearCanvasPreviewUrls();
   }
-  if (!isImageWorkspaceRoute() && (state.imageSessionEntries.length || state.referenceMediaEntries.length || state.maskMediaEntry)) {
-    clearImagePreviewUrls();
-    state.imageSessionEntries = [];
-    state.referenceMediaEntries = [];
-    state.maskMediaEntry = null;
-  }
+  // Keep the in-memory image workbench snapshot while switching pages.
   if (state.route === '/verify-email') return verifyEmailPage();
   if (state.route === '/forgot-password') return passwordResetRequestPage();
   if (state.route === '/reset-password') return resetPasswordPage();

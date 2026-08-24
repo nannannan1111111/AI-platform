@@ -29,6 +29,7 @@ from app.auth_abuse import (
 )
 from app.canvases import SqlAlchemyCanvases
 from app.credits import SqlAlchemyCredits, SqlAlchemyModelPrices
+from app.redeem_codes import SqlAlchemyRedeemCodes
 from app.database_metrics import install_database_pool_metrics
 from app.database_runtime import configure_postgresql_engine, postgres_advisory_lock
 from app.email_settings import SqlAlchemyEmailSettings
@@ -128,7 +129,7 @@ class ProductionSettings:
                 "PROVIDER_SECRETS_ROOT and GENERATED_MEDIA_ROOT must be different directories"
             )
 
-        configured_limit = values.get("MAX_ACTIVE_GENERATION_TASKS", "20").strip()
+        configured_limit = values.get("MAX_ACTIVE_GENERATION_TASKS", "500").strip()
         try:
             max_active_generation_tasks = int(configured_limit)
         except ValueError as exc:
@@ -201,7 +202,7 @@ class ProductionSettings:
             database_max_overflow=database_max_overflow,
             database_pool_timeout_seconds=database_pool_timeout_seconds,
             generation_submission_mode=generation_submission_mode,
-            generation_worker_deployed_limit=_positive_int(values, "GENERATION_WORKER_DEPLOYED_LIMIT", 4),
+            generation_worker_deployed_limit=_positive_int(values, "GENERATION_WORKER_DEPLOYED_LIMIT", 10),
             auth_rate_limit_hash_key=auth_rate_limit_hash_key,
             auth_abuse_policies=auth_abuse_policies,
             trusted_proxy_cidrs=trusted_proxy_cidrs,
@@ -406,6 +407,7 @@ def _compose_application(
     accounts = SqlAlchemyAccountAccess(sessions, verification_delivery=email_settings)
     model_prices = SqlAlchemyModelPrices(sessions)
     credits = SqlAlchemyCredits(sessions, model_prices=model_prices)
+    redeem_codes = SqlAlchemyRedeemCodes(sessions, credits)
     canvases = SqlAlchemyCanvases(sessions)
     worker_capacity = SqlAlchemyWorkerCapacitySettings(
         sessions,
@@ -480,6 +482,7 @@ def _compose_application(
         canvases=canvases,
         model_prices=model_prices,
         recharge_packages=credits,
+        redeem_codes=redeem_codes,
         recharge_orders=recharge_orders,
         recharge_order_chargebacks=recharge_orders,
         payment_methods=epay_payments,

@@ -35,6 +35,12 @@
   ];
   let imageCatalogPromise = null;
   const mediaPreviewUrls = new Set();
+  const thumbnailMediaUrls = new Map();
+  const thumbnailMediaLoads = new Map();
+  const thumbnailQueue = [];
+  let thumbnailActive = 0;
+  const originalMediaUrls = new Map();
+  const originalMediaLoads = new Map();
   const completedGenerationTaskNotices = new Set();
 
   window.SaaSCanvasGateway = Object.freeze({
@@ -44,9 +50,15 @@
     generationTasksUrl,
     streamGenerationTask,
     newGenerationTaskId,
+    previewMedia,
+    loadOriginalMedia,
+    cachedOriginalMediaUrl(value) {
+      return originalMediaUrls.get(mediaIdFromValue(value)) || '';
+    },
     editorUrl(id, kind) {
       const encodedId = encodeURIComponent(id);
-      return `/workspace/canvases/${encodedId}/${kind}?id=${encodedId}`;
+      // 经典画布已停止提供新入口；旧调用方仍可传 kind，但统一落到智能编辑器。
+      return `/workspace/canvases/${encodedId}/smart?id=${encodedId}`;
     },
   });
 
@@ -65,7 +77,27 @@
   }
 
   async function saasFetch(path, options = {}) {
-    const response = await nativeFetch(path, authorizedOptions(options));
+    const { timeoutMs = 15_000, ...requestOptions } = options;
+    const controller = new AbortController();
+    const timeoutHandle = timeoutMs > 0 ? window.setTimeout(() => controller.abort(), timeoutMs) : 0;
+    const externalSignal = requestOptions.signal;
+    const abortFromCaller = () => controller.abort(externalSignal.reason);
+    if (externalSignal) {
+      if (externalSignal.aborted) controller.abort(externalSignal.reason);
+      else externalSignal.addEventListener('abort', abortFromCaller, { once: true });
+    }
+    let response;
+    try {
+      response = await nativeFetch(path, authorizedOptions({ ...requestOptions, signal: controller.signal }));
+    } catch (error) {
+      if (controller.signal.aborted && !externalSignal?.aborted) {
+        throw new Error(`请求超时（${Math.round(timeoutMs / 1000)} 秒），请稍后重试`);
+      }
+      throw error;
+    } finally {
+      if (timeoutHandle) window.clearTimeout(timeoutHandle);
+      externalSignal?.removeEventListener('abort', abortFromCaller);
+    }
     if (response.status === 401) {
       window.sessionStorage.removeItem(TOKEN_KEY);
       window.location.replace('/login');
@@ -73,15 +105,17 @@
     return response;
   }
 
-  async function streamGenerationTask(taskId, onMedia = null) {
+  async function streamGenerationTask(taskId, onMedia = null, onTask = null) {
     const response = await saasFetch(
       `/api/v1/generation-tasks/${encodeURIComponent(taskId)}/events`,
-      { headers: { Accept: 'text/event-stream' } },
+      { headers: { Accept: 'text/event-stream' }, timeoutMs: 0 },
     );
     if (!response.ok || !response.body) throw new Error('任务状态连接不可用');
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffered = '';
+    let terminalTask = null;
+    let mediaEventSeen = false;
     try {
       while (true) {
         const { value, done } = await reader.read();
@@ -98,12 +132,15 @@
           if (!data) continue;
           const payload = JSON.parse(data);
           if (eventName === 'media') {
+            mediaEventSeen = true;
             if (onMedia) await onMedia(payload);
             continue;
           }
           const task = payload;
-          if (['succeeded', 'failed', 'cancelled'].includes(task.status)) return task;
+          if (onTask) await onTask(task);
+          if (['succeeded', 'failed', 'cancelled'].includes(task.status)) terminalTask = task;
         }
+        if (terminalTask && (terminalTask.status !== 'succeeded' || mediaEventSeen || done)) return terminalTask;
         if (done) throw new Error('任务状态连接提前关闭');
       }
     } finally {
@@ -269,6 +306,65 @@
     return `/api/v1/media/${encodeURIComponent(mediaId)}/content`;
   }
 
+  function mediaThumbnailUrl(mediaId, size = 512) {
+    const width = Math.max(64, Math.min(2048, Number(size) || 512));
+    return `/api/v1/media/${encodeURIComponent(mediaId)}/thumbnail?size=${width}`;
+  }
+
+  function mediaIdFromValue(value) {
+    if (value && typeof value === 'object' && value.media_id) return String(value.media_id);
+    const raw = typeof value === 'string' ? value : value?.url || '';
+    const match = String(raw).match(/^\/api\/v1\/media\/([^/]+)\/content(?:[?#]|$)/);
+    return match ? decodeURIComponent(match[1]) : '';
+  }
+
+  async function loadThumbnailMedia(mediaId, size = 512) {
+    const cacheKey = `${mediaId}:${Math.max(64, Math.min(2048, Number(size) || 512))}`;
+    if (thumbnailMediaUrls.has(cacheKey)) return thumbnailMediaUrls.get(cacheKey);
+    if (thumbnailMediaLoads.has(cacheKey)) return thumbnailMediaLoads.get(cacheKey);
+    const task = new Promise((resolve, reject) => {
+      thumbnailQueue.push({ mediaId, size, cacheKey, resolve, reject });
+      pumpThumbnailQueue();
+    }).finally(() => thumbnailMediaLoads.delete(cacheKey));
+    thumbnailMediaLoads.set(cacheKey, task);
+    return task;
+  }
+
+  function pumpThumbnailQueue() {
+    while (thumbnailActive < 8 && thumbnailQueue.length) {
+      const item = thumbnailQueue.shift();
+      thumbnailActive += 1;
+      (async () => {
+        const response = await saasFetch(mediaThumbnailUrl(item.mediaId, item.size));
+        if (!response.ok) throw new Error('缩略图加载失败');
+        const previewUrl = URL.createObjectURL(await response.blob());
+        mediaPreviewUrls.add(previewUrl);
+        thumbnailMediaUrls.set(item.cacheKey, previewUrl);
+        return previewUrl;
+      })().then(item.resolve, item.reject).finally(() => {
+        thumbnailActive -= 1;
+        pumpThumbnailQueue();
+      });
+    }
+  }
+
+  async function loadOriginalMedia(value) {
+    const mediaId = mediaIdFromValue(value);
+    if (!mediaId) return typeof value === 'string' ? value : value?.url || '';
+    if (originalMediaUrls.has(mediaId)) return originalMediaUrls.get(mediaId);
+    if (originalMediaLoads.has(mediaId)) return originalMediaLoads.get(mediaId);
+    const task = (async () => {
+      const response = await saasFetch(mediaContentUrl(mediaId));
+      if (!response.ok) throw new Error('原图加载失败');
+      const originalUrl = URL.createObjectURL(await response.blob());
+      mediaPreviewUrls.add(originalUrl);
+      originalMediaUrls.set(mediaId, originalUrl);
+      return originalUrl;
+    })().finally(() => originalMediaLoads.delete(mediaId));
+    originalMediaLoads.set(mediaId, task);
+    return task;
+  }
+
   function sameDeliveredMedia(item, media) {
     return item && typeof item === 'object' && (
       item.media_id === media.media_id
@@ -278,12 +374,15 @@
 
   async function previewMedia(media) {
     if (media?.kind !== 'image' || !['temporary', 'persistent'].includes(media?.state)) return null;
-    const response = await saasFetch(mediaContentUrl(media.media_id));
-    if (!response.ok) return null;
-    const previewUrl = URL.createObjectURL(await response.blob());
-    mediaPreviewUrls.add(previewUrl);
+    let previewUrl;
+    try {
+      previewUrl = await loadThumbnailMedia(media.media_id);
+    } catch (_) {
+      return null;
+    }
     return {
-      url: previewUrl,
+      url: mediaContentUrl(media.media_id),
+      thumbnail: previewUrl,
       media_id: media.media_id,
       generationTaskId: media.task_id,
       kind: 'image',
@@ -300,14 +399,10 @@
       return;
     }
     if (!value || typeof value !== 'object') return;
-    if (value.media_id && typeof value.url === 'string' && !value.url.startsWith('blob:')) {
+    if (value.media_id && (!value.thumbnail || !String(value.thumbnail).startsWith('blob:'))) {
       try {
-        const response = await saasFetch(mediaContentUrl(value.media_id));
-        if (response.ok) {
-          const previewUrl = URL.createObjectURL(await response.blob());
-          mediaPreviewUrls.add(previewUrl);
-          value.url = previewUrl;
-        }
+        value.thumbnail = await loadThumbnailMedia(value.media_id);
+        value.url = mediaContentUrl(value.media_id);
       } catch (_) {
         // Keep the stable authenticated path when a preview cannot be hydrated yet.
       }
@@ -319,7 +414,6 @@
     const taskResponse = await saasFetch(`/api/v1/generation-tasks/${encodeURIComponent(taskId)}`);
     if (!taskResponse.ok) return { task: null, media: [] };
     const task = await taskResponse.json();
-    if (task.status !== 'succeeded') return { task, media: [] };
     const mediaResponse = await saasFetch(
       `/api/v1/generation-tasks/${encodeURIComponent(taskId)}/media`,
     );
@@ -329,6 +423,20 @@
       task,
       media: (await Promise.all((Array.isArray(media) ? media : []).map(previewMedia))).filter(Boolean),
     };
+  }
+
+  async function mapWithConcurrency(values, limit, mapper) {
+    const results = new Array(values.length);
+    let nextIndex = 0;
+    async function worker() {
+      while (true) {
+        const index = nextIndex++;
+        if (index >= values.length) return;
+        results[index] = await mapper(values[index], index);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(limit, values.length) }, worker));
+    return results;
   }
 
   function replaceTaskMedia(items, taskIds, media) {
@@ -349,13 +457,13 @@
     const nodesWithTasks = nodes.map(node => ({ node, taskIds: generationTaskIds(node) }))
       .filter(item => item.taskIds.length);
     const allTaskIds = [...new Set(nodesWithTasks.flatMap(item => item.taskIds))];
-    const resultsByTask = new Map(await Promise.all(allTaskIds.map(async taskId => {
+    const resultsByTask = new Map(await mapWithConcurrency(allTaskIds, 6, async taskId => {
       try {
         return [taskId, { resolved: true, ...await generationTaskResult(taskId) }];
       } catch (_) {
         return [taskId, { resolved: false, task: null, media: [] }];
       }
-    })));
+    }));
 
     nodesWithTasks.forEach(({ node, taskIds }) => {
       const resolvedTaskIds = taskIds.filter(taskId => resultsByTask.get(taskId)?.resolved);
@@ -464,13 +572,18 @@
     const stable = Object.fromEntries(
       Object.entries(value).map(([key, item]) => [key, stableCanvasValue(item)]),
     );
-    if (stable.media_id) stable.url = mediaContentUrl(stable.media_id);
+    if (stable.media_id) {
+      stable.url = mediaContentUrl(stable.media_id);
+      if (typeof stable.thumbnail === 'string' && stable.thumbnail.startsWith('blob:')) delete stable.thumbnail;
+    }
     return stable;
   }
 
   window.addEventListener('pagehide', () => {
     mediaPreviewUrls.forEach(previewUrl => URL.revokeObjectURL(previewUrl));
     mediaPreviewUrls.clear();
+    thumbnailMediaUrls.clear();
+    originalMediaUrls.clear();
   }, { once: true });
 
   function jsonResponse(source, payload, status = source.status) {
@@ -666,6 +779,9 @@
       if (!dimensions || ![width, height].every(value => Number.isInteger(value) && value >= 256 && value <= 8192 && value % 16 === 0)) {
         throw new Error('自定义像素尺寸不对，请修改！');
       }
+      if (!['png', 'jpeg', 'webp'].includes(outputFormat)) {
+        throw new Error('当前 SaaS 生图不支持该输出格式');
+      }
       return {
         aspect_ratio: 'custom',
         quality: 'auto',
@@ -848,11 +964,13 @@
     if (!response.ok) return response;
     const body = await response.json();
     const files = await Promise.all((body.files || []).map(async file => {
-      const preview = await saasFetch(mediaContentUrl(file.media_id));
-      if (!preview.ok) throw new Error('上传图片预览当前不可用');
-      const previewUrl = URL.createObjectURL(await preview.blob());
-      mediaPreviewUrls.add(previewUrl);
-      return { ...file, url: previewUrl, mediaState: 'persistent' };
+      const previewUrl = await loadThumbnailMedia(file.media_id);
+      return {
+        ...file,
+        url: mediaContentUrl(file.media_id),
+        thumbnail: previewUrl,
+        mediaState: 'persistent',
+      };
     }));
     return jsonResponse(response, { files });
   }
@@ -952,7 +1070,7 @@
     const body = await requestBody(input, options);
     const response = await saasFetch('/api/v1/canvases', {
       method: 'POST',
-      body: JSON.stringify({ title: body.title, kind: body.kind || 'classic' }),
+      body: JSON.stringify({ title: body.title, kind: 'smart' }),
     });
     if (!response.ok) return response;
     return jsonResponse(response, { canvas: legacyCanvas(await response.json()) });
@@ -964,7 +1082,10 @@
     const method = String(options.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
     if (
       method === 'GET'
-      && /^\/api\/v1\/(media|reference-media)\/[^/]+\/content$/.test(url.pathname)
+      && (
+        /^\/api\/v1\/(media|reference-media)\/[^/]+\/content$/.test(url.pathname)
+        || /^\/api\/v1\/media\/[^/]+\/thumbnail$/.test(url.pathname)
+      )
     ) {
       return saasFetch(`${url.pathname}${url.search}`, options);
     }

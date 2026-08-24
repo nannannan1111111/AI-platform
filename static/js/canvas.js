@@ -38,9 +38,15 @@ function canvasDisplayMediaUrl(url, name=''){
 function canvasMediaPreviewUrl(url, size=512){
     return StudioMedia.mediaPreviewUrl(url, size);
 }
-function canvasPreviewImgHtml(url, size=512, attrs=''){
-    const original = canvasOriginalMediaUrl(url);
-    const preview = canvasMediaPreviewUrl(original, size);
+async function canvasOriginalForInteraction(itemOrUrl){
+    if(window.SaaSCanvasGateway?.active && window.SaaSCanvasGateway.loadOriginalMedia){
+        return window.SaaSCanvasGateway.loadOriginalMedia(itemOrUrl);
+    }
+    return canvasDisplayMediaUrl(itemOrUrl, itemOrUrl?.name || '');
+}
+function canvasPreviewImgHtml(itemOrUrl, size=512, attrs=''){
+    const original = canvasOriginalMediaUrl(itemOrUrl);
+    const preview = canvasMediaPreviewUrl(itemOrUrl, size);
     // loading=lazy：画布内容多时，视口外的缩略图不加载/不解码，避免一次性解码上百张图卡顿；
     // decoding=async：解码放到主线程外，渲染时不阻塞。
     return `<img loading="lazy" decoding="async" src="${escapeAttr(preview)}" data-preview-src="${escapeAttr(preview)}" data-original-src="${escapeAttr(original)}" data-url="${escapeAttr(original)}"${attrs ? ` ${attrs}` : ''}>`;
@@ -112,7 +118,7 @@ function bindCanvasPreviewImageFallbacks(root=document){
                 img.replaceWith(video.content.firstElementChild);
                 return;
             }
-            if(original && img.getAttribute('src') !== original) img.src = original;
+            if(!window.SaaSCanvasGateway?.active && original && img.getAttribute('src') !== original) img.src = original;
         });
     });
 }
@@ -155,6 +161,13 @@ function canvasImageNearViewport(img){
         && rect.bottom >= boardRect.top - margin && rect.top <= boardRect.bottom + margin;
 }
 function syncCanvasSelectedImageResolution(root=nodesEl){
+    if(window.SaaSCanvasGateway?.active){
+        root.querySelectorAll?.('.node img[data-preview-src]').forEach(img => {
+            const preview = img.dataset.previewSrc || '';
+            if(preview && img.getAttribute('src') !== preview) img.src = preview;
+        });
+        return;
+    }
     const selectedImages = [];
     const wantHighRes = canvasViewportWantsHighRes();
     root.querySelectorAll?.('.node img[data-preview-src][data-original-src]').forEach(img => {
@@ -1027,6 +1040,7 @@ async function generatorSizeForRun(gen, refs){
             } catch(_) {}
         }
     }
+    if(window.SaaSCanvasGateway?.active && gen.ratio === 'custom' && gen.customSize) return gen.customSize;
     const ratio = (gen.ratio === 'source' && !gen.customRatio)
         ? 'square'
         : (gen.ratio ?? 'square');
@@ -1498,7 +1512,7 @@ function validCustomPixelSize(width, height){
     return [Number(width), Number(height)].every(value => Number.isInteger(value) && value >= 256 && value <= 8192 && value % 16 === 0);
 }
 function validateGeneratorCustomPixelSize(node){
-    if(node?.resolution !== 'custom') return true;
+    if(node?.resolution !== 'custom' && !(window.SaaSCanvasGateway?.active && node?.ratio === 'custom')) return true;
     if(validCustomPixelSize(node.customWidth, node.customHeight)) return true;
     showErrorModal('自定义像素尺寸不对，请修改！', '尺寸提示');
     return false;
@@ -2604,7 +2618,7 @@ function addGeneratorNode(point){
     const p = point || defaultPoint(120, 0);
     const providerId = imageApiProviders()[0]?.id || '';
     const model = allImageModels(providerId)[0] || '';
-    return addNode({id:uid('gen'), type:'generator', x:p.x, y:p.y, apiProvider:providerId, model, ratio:'square', resolution:defaultApiImageResolution(model), customRatio:'', customSize:'', customRatioWidth:'', customRatioHeight:'', customWidth:'', customHeight:'', inputs:[]});
+    return addNode({id:uid('gen'), type:'generator', x:p.x, y:p.y, apiProvider:providerId, model, ratio:'square', resolution:defaultApiImageResolution(model), outputFormat:'png', inputFidelity:'auto', customRatio:'', customSize:'', customRatioWidth:'', customRatioHeight:'', customWidth:'', customHeight:'', inputs:[]});
 }
 function addMidjourneyNode(point){
     const p = point || defaultPoint(140, 0);
@@ -3050,6 +3064,7 @@ async function runMsGenNode(nodeId, opts={}){
     if(!node || (node.running && !opts.cascade)) return;
     if(!validateCustomPixelSizeFor(node, 'msResolution', 'msCustomWidth', 'msCustomHeight')) return;
     const cascadeTargetId = cascadeTargetIdFromOptions(opts);
+    const saasApiImage = window.SaaSCanvasGateway?.active === true;
     const sources = orderedSources(node, generatorSources(node));
     const prompt = sources.map(s => s.prompt).filter(Boolean).join('\n\n');
     const refs = imageRefsOnly(sources.flatMap(s => s.refs || []));
@@ -3077,7 +3092,7 @@ async function runMsGenNode(nodeId, opts={}){
     if(!opts.cascade){
         node.running = true;
         refreshRunNodes(node, out);
-        setTimeout(() => { node.running = false; refreshRunNodes(node, out); }, 2000);
+        if(!saasApiImage) setTimeout(() => { node.running = false; refreshRunNodes(node, out); }, 2000);
     }
     else refreshRunNodes(node, out);
     try {
@@ -5176,6 +5191,7 @@ function canvasUploadedMediaFields(file){
     const fields = {};
     if(file?.media_id) fields.media_id = file.media_id;
     if(file?.mime_type) fields.mime_type = file.mime_type;
+    if(file?.thumbnail) fields.thumbnail = file.thumbnail;
     const mediaState = file?.mediaState || file?.state
         || (window.SaaSCanvasGateway?.active && file?.media_id ? 'persistent' : '');
     if(mediaState) fields.mediaState = mediaState;
@@ -5417,9 +5433,17 @@ function openImageEditor(nodeId, initialMode='crop'){
         refreshIcons();
     };
     img.crossOrigin = 'anonymous';
-    const fullEditorSrc = canvasDisplayMediaUrl(node.url, node.name || '');
-    const quickEditorSrc = canvasMediaPreviewUrl(node.url, initialMode === 'preview' ? 1536 : 2048);
-    if(quickEditorSrc && quickEditorSrc !== fullEditorSrc){
+    let fullEditorSrc = canvasDisplayMediaUrl(node.url, node.name || '');
+    const quickEditorSrc = canvasMediaPreviewUrl(node, initialMode === 'preview' ? 1536 : 2048);
+    if(window.SaaSCanvasGateway?.active && node.media_id){
+        img.src = quickEditorSrc || node.thumbnail || '';
+        canvasOriginalForInteraction(node).then(originalSrc => {
+            if(!cropState || cropState.nodeId !== nodeId) return;
+            if(!modal.classList.contains('open') || img.dataset.editorSrcToken !== editorSrcToken) return;
+            fullEditorSrc = originalSrc;
+            if(originalSrc && img.getAttribute('src') !== originalSrc) img.src = originalSrc;
+        }).catch(() => {});
+    } else if(quickEditorSrc && quickEditorSrc !== fullEditorSrc){
         img.src = quickEditorSrc;
         requestAnimationFrame(() => {
             setTimeout(() => {
@@ -5868,6 +5892,7 @@ function restoreMediaPlaybackStates(states){
     });
 }
 function measureCanvasOriginalImageNodes(root=nodesEl){
+    if(window.SaaSCanvasGateway?.active) return;
     root.querySelectorAll?.('.image-node img[data-original-src]').forEach(imgEl => {
         if(imgEl.dataset.previewKind === 'video') return;
         const nodeEl = imgEl.closest('.image-node');
@@ -6141,7 +6166,7 @@ function renderNode(node){
             const missing = isMissingAssetUrl(node.url);
             const mediaKind = mediaKindForNode(node);
             const isEditableImage = mediaKind === 'image' && !missing;
-            body.innerHTML = `<div class="image-preview-wrap">${missing ? missingAssetHtml(node.url) : canvasPreviewImgHtml(node.url, 768, 'draggable="false"')}</div><div class="image-caption text-[11px] text-gray-400 truncate">${escapeHtml(node.name || 'image')}${missing ? ` · ${langIsEn() ? 'missing' : '文件缺失'}` : ''}</div>`;
+            body.innerHTML = `<div class="image-preview-wrap">${missing ? missingAssetHtml(node.url) : canvasPreviewImgHtml(node, 768, 'draggable="false"')}</div><div class="image-caption text-[11px] text-gray-400 truncate">${escapeHtml(node.name || 'image')}${missing ? ` · ${langIsEn() ? 'missing' : '文件缺失'}` : ''}</div>`;
             if(!missing && mediaKind !== 'image'){
                 const mediaHtml = mediaKind === 'video'
                     ? `<div class="media-card video-card">${canvasVideoPreviewHtml(node.url, 768, 'draggable="false" data-video-fallback-attrs="controls"')}<button class="canvas-video-play" type="button" title="播放"><i data-lucide="play"></i></button></div>`
@@ -8236,6 +8261,15 @@ function renderGeneratorBody(node){
     const promptInputs = ordered.filter(src => src.prompt && !src.refs?.length);
     sanitizeImageNodeProviderModel(node);
     normalizeApiNodeSizeChoice(node);
+    const saasApiImage = window.SaaSCanvasGateway?.active === true;
+    if(saasApiImage){
+        if(!['1k','2k','4k','custom'].includes(node.resolution)) node.resolution = '4k';
+        if(!['square','landscape43','wide','portrait43','story','custom'].includes(node.ratio)) node.ratio = 'square';
+        if(node.resolution === 'custom' && node.customSize) node.ratio = 'custom';
+        if(!['png','jpeg','webp'].includes(node.outputFormat)) node.outputFormat = 'png';
+        if(!['auto','low','high'].includes(node.inputFidelity)) node.inputFidelity = 'auto';
+        node.count = Math.max(1, Math.min(5, Number(node.count || 1)));
+    }
     wrap.innerHTML = `
         <div class="prompt-list mb-3"></div>
         <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">${tr('canvas.images')}</div>
@@ -8247,7 +8281,7 @@ function renderGeneratorBody(node){
             </div>
             <div class="gen-settings-row api-size-row">
                 <select class="select-lite resolution compact-select" data-field="resolution">
-                    <option value="auto">自动</option>
+                    ${saasApiImage ? '' : '<option value="auto">自动</option>'}
                     <option value="1k">1K</option>
                     <option value="2k">2K</option>
                     <option value="4k">4K</option>
@@ -8255,27 +8289,22 @@ function renderGeneratorBody(node){
                 </select>
                 <select class="select-lite ratio compact-select" data-field="ratio">
                     <option value="square">1:1</option>
-                    <option value="portrait">2:3</option>
-                    <option value="landscape">3:2</option>
-                    <option value="portrait43">3:4</option>
                     <option value="landscape43">4:3</option>
-                    <option value="story">9:16</option>
                     <option value="wide">16:9</option>
-                    <option value="ultrawide">21:9</option>
-                    <option value="ultratall">9:21</option>
-                    <option value="source">${tr('canvas.adaptiveRatio')}</option>
-                    <option value="custom">${tr('canvas.custom')}</option>
+                    ${saasApiImage ? '<option value="portrait43">3:4</option><option value="story">9:16</option>' : '<option value="portrait">2:3</option><option value="landscape">3:2</option><option value="portrait43">3:4</option><option value="story">9:16</option><option value="source">' + tr('canvas.adaptiveRatio') + '</option>'}
+                    ${saasApiImage ? '' : `<option value="custom">${tr('canvas.custom')}</option>`}
                 </select>
-                <select class="select-lite quality-select">
+                <select class="select-lite quality-select" ${saasApiImage ? 'style="display:none"' : ''}>
                     <option value="auto">Q auto</option>
                     <option value="low">Q low</option>
                     <option value="medium">Q med</option>
                     <option value="high">Q high</option>
                 </select>
+                ${saasApiImage ? `<select class="select-lite output-format-select"><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WEBP</option></select><select class="select-lite input-fidelity-select"><option value="auto">保真度 自动</option><option value="low">保真度 低</option><option value="high">保真度 高</option></select>` : ''}
                 <div class="gen-count-row">
                     <div class="gen-stepper">
                         <button class="gen-step-btn" data-step="-1" type="button" title="${tr('canvas.decrease')}" aria-label="${tr('canvas.decreaseCount')}"><i data-lucide="chevron-left" class="w-3.5 h-3.5"></i></button>
-                        <input class="gen-count-input" type="text" inputmode="numeric" pattern="[0-9]*" value="${Math.max(1, Math.min(8, Number(node.count || 1)))}">
+                        <input class="gen-count-input" type="text" inputmode="numeric" pattern="[0-9]*" value="${Math.max(1, Math.min(saasApiImage ? 5 : 8, Number(node.count || 1)))}">
                         <button class="gen-step-btn" data-step="1" type="button" title="${tr('canvas.increase')}" aria-label="${tr('canvas.increaseCount')}"><i data-lucide="chevron-right" class="w-3.5 h-3.5"></i></button>
                     </div>
                 </div>
@@ -8339,6 +8368,8 @@ function renderGeneratorBody(node){
     const ratioSelect = wrap.querySelector('.ratio');
     const resolutionSelect = wrap.querySelector('.resolution');
     const qualitySelect = wrap.querySelector('.quality-select');
+    const outputFormatSelect = wrap.querySelector('.output-format-select');
+    const inputFidelitySelect = wrap.querySelector('.input-fidelity-select');
     const customRatioRow = wrap.querySelector('.custom-ratio-row');
     const customSizeRow = wrap.querySelector('.custom-size-row');
     const customRatioWInput = wrap.querySelector('.custom-ratio-w-input');
@@ -8348,6 +8379,11 @@ function renderGeneratorBody(node){
     const fitSizeBtn = wrap.querySelector('.fit-size-btn');
     const referenceImages = ordered.flatMap(src => src.refs || []);
     const syncQualityControls = () => {
+        if(outputFormatSelect){
+            outputFormatSelect.value = ['png','jpeg','webp'].includes(node.outputFormat) ? node.outputFormat : 'png';
+            inputFidelitySelect.value = ['auto','low','high'].includes(node.inputFidelity) ? node.inputFidelity : 'auto';
+        }
+        if(!qualitySelect) return;
         qualitySelect.disabled = node.resolution === 'custom';
         if(!['auto','low','medium','high'].includes(String(node.quality || 'auto'))) node.quality = 'auto';
         qualitySelect.value = node.quality || 'auto';
@@ -8406,8 +8442,8 @@ function renderGeneratorBody(node){
         ratioSelect.value = ratioValue;
         resolutionSelect.value = node.resolution || defaultApiImageResolution(node.model);
         ratioSelect.disabled = node.resolution === 'custom' || node.resolution === 'auto';
-        customRatioRow.style.display = (node.resolution !== 'auto' && (node.ratio === 'custom' || node.ratio === 'source')) ? 'flex' : 'none';
-        customSizeRow.style.display = node.resolution === 'custom' ? 'flex' : 'none';
+        customRatioRow.style.display = !saasApiImage && (node.resolution !== 'auto' && (node.ratio === 'custom' || node.ratio === 'source')) ? 'flex' : 'none';
+        customSizeRow.style.display = node.resolution === 'custom' || (saasApiImage && node.ratio === 'custom') ? 'flex' : 'none';
         customRatioWInput.disabled = node.ratio === 'source';
         customRatioHInput.disabled = node.ratio === 'source';
         customRatioWInput.value = node.customRatioWidth || '';
@@ -8425,11 +8461,20 @@ function renderGeneratorBody(node){
         node.quality = e.target.value;
         scheduleSave();
     };
+    if(outputFormatSelect){
+        outputFormatSelect.onmousedown = e => e.stopPropagation();
+        outputFormatSelect.onclick = e => e.stopPropagation();
+        outputFormatSelect.onchange = e => { e.stopPropagation(); node.outputFormat = e.target.value; scheduleSave(); };
+        inputFidelitySelect.onmousedown = e => e.stopPropagation();
+        inputFidelitySelect.onclick = e => e.stopPropagation();
+        inputFidelitySelect.onchange = e => { e.stopPropagation(); node.inputFidelity = e.target.value; scheduleSave(); };
+    }
     ratioSelect.onmousedown = e => e.stopPropagation();
     ratioSelect.onclick = e => e.stopPropagation();
     ratioSelect.onchange = e => {
         e.stopPropagation();
         node.ratio = e.target.value;
+        if(saasApiImage && node.ratio !== 'custom' && node.resolution === 'custom') node.resolution = '4k';
         normalizeApiNodeSizeChoice(node);
         if(node.ratio !== 'custom' && node.ratio !== 'source') {
             node.customRatio = '';
@@ -8450,7 +8495,7 @@ function renderGeneratorBody(node){
         node.resolution = e.target.value;
         node._apiResolutionUserSet = true;
         if(node.resolution === 'custom') {
-            node.ratio = '';
+            if(!saasApiImage) node.ratio = '';
         } else if(node.resolution === 'auto') {
             if(!node.ratio) node.ratio = 'square';
             node.customSize = '';
@@ -8489,9 +8534,9 @@ function renderGeneratorBody(node){
             node.customWidth = customWInput.value;
             node.customHeight = customHInput.value;
             node.customSize = node.customWidth && node.customHeight ? `${node.customWidth}x${node.customHeight}` : '';
-            node.resolution = 'custom';
+            if(!saasApiImage) node.resolution = 'custom';
             node._apiResolutionUserSet = true;
-            node.ratio = '';
+            node.ratio = saasApiImage ? 'custom' : '';
             syncSizeControls();
             scheduleSave();
         };
@@ -8507,9 +8552,9 @@ function renderGeneratorBody(node){
                 node.customWidth = dims.width;
                 node.customHeight = dims.height;
                 node.customSize = `${dims.width}x${dims.height}`;
-                node.resolution = 'custom';
+                if(!saasApiImage) node.resolution = 'custom';
                 node._apiResolutionUserSet = true;
-                node.ratio = '';
+                node.ratio = saasApiImage ? 'custom' : '';
                 syncSizeControls();
                 scheduleSave();
             } catch(err) {
@@ -8522,15 +8567,15 @@ function renderGeneratorBody(node){
     countInput.onmousedown = e => e.stopPropagation();
     countInput.onclick = e => e.stopPropagation();
     countInput.oninput = e => {
-        const value = Math.max(1, Math.min(8, Number(e.target.value) || 1));
+        const value = Math.max(1, Math.min(saasApiImage ? 5 : 8, Number(e.target.value) || 1));
         node.count = value;
         scheduleSave();
     };
-    countInput.onblur = e => { e.target.value = String(Math.max(1, Math.min(8, Number(node.count || 1)))); };
+    countInput.onblur = e => { e.target.value = String(Math.max(1, Math.min(saasApiImage ? 5 : 8, Number(node.count || 1)))); };
     wrap.querySelectorAll('[data-step]').forEach(btn => {
         btn.onclick = e => {
             e.stopPropagation();
-            const next = Math.max(1, Math.min(8, Number(node.count || 1) + Number(btn.dataset.step || 0)));
+            const next = Math.max(1, Math.min(saasApiImage ? 5 : 8, Number(node.count || 1) + Number(btn.dataset.step || 0)));
             node.count = next;
             countInput.value = String(next);
             scheduleSave();
@@ -9873,6 +9918,7 @@ async function runRhModelNode(node, opts={}){
     if(!node || (node.running && !opts.cascade)) return;
     if(!validateGeneratorCustomPixelSize(node)) return;
     const cascadeTargetId = cascadeTargetIdFromOptions(opts);
+    const saasApiImage = window.SaaSCanvasGateway?.active === true;
     const selectedRef = rhSelectedEntryRef(node);
     const model = selectedRef?.id || node.rhModel || node.model || '';
     if(!model){
@@ -9904,7 +9950,7 @@ async function runRhModelNode(node, opts={}){
     if(!opts.cascade){
         node.running = true;
         refreshRunNodes(node, out);
-        setTimeout(() => { node.running = false; refreshRunNodes(node, out); }, 2000);
+        if(!saasApiImage) setTimeout(() => { node.running = false; refreshRunNodes(node, out); }, 2000);
     }
     try {
         const taskInfos = await createCanvasImageTasks(payload, count, {cascadeTargetId, bindingNode:node});
@@ -10292,11 +10338,12 @@ async function runGenerator(genId, opts={}){
     if(!gen || (gen.running && !opts.cascade)) return;
     if(!validateGeneratorCustomPixelSize(gen)) return;
     const cascadeTargetId = cascadeTargetIdFromOptions(opts);
+    const saasApiImage = window.SaaSCanvasGateway?.active === true;
     const sources = orderedSources(gen, generatorSources(gen));
     const prompt = sources.map(s => s.prompt).filter(Boolean).join('\n\n');
     const refs = imageRefsOnly(sources.flatMap(s => s.refs || []));
     if(!prompt && !refs.length){ alert(tr('canvas.needPromptOrImage')); return; }
-    const count = Math.max(1, Math.min(8, Number(gen.count || 1)));
+    const count = Math.max(1, Math.min(saasApiImage ? 5 : 8, Number(gen.count || 1)));
     let out = outputForNode(gen, 460);
     const run = runSnapshot(gen, prompt || 'Edit the reference images.', refs);
     const payload = {
@@ -10304,19 +10351,24 @@ async function runGenerator(genId, opts={}){
         provider_id:resolveImageProviderId(gen.apiProvider || 'comfly'),
         model:resolveImageModel(gen.model),
         size:await generatorSizeForRun(gen, refs),
-        aspect_ratio:API_RATIO_VALUES[gen.ratio] || (gen.ratio === 'custom' ? String(gen.customRatio || '').trim() : ''),
+        aspect_ratio:API_RATIO_VALUES[gen.ratio] || (gen.ratio === 'custom' ? 'custom' : ''),
         resolution:['1k','2k','4k','custom'].includes(gen.resolution) ? gen.resolution : '',
+        ...(saasApiImage ? {
+            resolution_tier: gen.ratio === 'custom' || gen.resolution === 'custom' ? 'custom' : (['1k','2k','4k'].includes(gen.resolution) ? gen.resolution : '4k'),
+            output_format: ['png','jpeg','webp'].includes(gen.outputFormat) ? gen.outputFormat : 'png',
+            input_fidelity: refs.length && ['auto','low','high'].includes(gen.inputFidelity) ? gen.inputFidelity : 'auto',
+        } : {}),
         reference_images:refs.slice(0, CANVAS_REFERENCE_IMAGE_MAX)
     };
     const quality = normalizedImageQuality(gen.quality);
-    if(quality) payload.quality = quality;
+    if(!saasApiImage && quality) payload.quality = quality;
     let pendingIds = [];
     const startedAt = nowMs();
     if(!opts.cascade){
         gen.running = true;
         refreshRunNodes(gen, out);
-        // API 支持并发：2s 后即可再次点击，任务仍由 pending 卡片继续追踪
-        setTimeout(() => { gen.running = false; refreshRunNodes(gen, out); }, 2000);
+        // 非 SaaS 旧链路允许 2 秒后再次点击；SaaS 任务保持运行锁直到终态。
+        if(!saasApiImage) setTimeout(() => { gen.running = false; refreshRunNodes(gen, out); }, 2000);
     }
     try {
         const taskInfos = await createCanvasImageTasks(payload, count, {cascadeTargetId, bindingNode:gen});
@@ -10680,9 +10732,18 @@ function resultMediaUrls(result){
             return;
         }
         if(typeof value === 'object'){
-            if(value.url || value.path || value.src || value.uri){
-                const url = value.url || value.path || value.src || value.uri;
-                if(url) urls.push({url, kind:value.kind || value.type || value.mediaKind || '', name:value.name || value.filename || ''});
+            const mediaId = String(value.media_id || value.mediaId || '').trim();
+            if(value.url || value.path || value.src || value.uri || mediaId){
+                const url = value.url || value.path || value.src || value.uri
+                    || (window.SaaSCanvasGateway?.active && mediaId
+                        ? `/api/v1/media/${encodeURIComponent(mediaId)}/content` : '');
+                if(url) urls.push({
+                    ...value,
+                    url,
+                    ...(mediaId ? {media_id:mediaId} : {}),
+                    kind:value.kind || value.type || value.mediaKind || '',
+                    name:value.name || value.filename || '',
+                });
             }
             ['outputs','videos','images','urls','data','result'].forEach(key => add(value[key]));
             ['url','path','src','uri','output','output_url','outputUrl','video','video_url','videoUrl','mp4_url','mp4Url','download_url','downloadUrl','preview_url','previewUrl'].forEach(key => add(value[key]));
@@ -11526,7 +11587,7 @@ function renderCanvasLog(){
             const safe = escapeAttr(url);
             if(isMissingAssetUrl(url)) return `<div class="missing-asset compact" data-url="${safe}"><i data-lucide="image-off" class="w-4 h-4"></i></div>`;
             const kind = mediaKindForOutputItem(item);
-            return kind === 'video' ? canvasVideoPreviewHtml(url, 256, 'alt="output"') : canvasPreviewImgHtml(url, 256, 'alt="output"');
+            return kind === 'video' ? canvasVideoPreviewHtml(url, 256, 'alt="output"') : canvasPreviewImgHtml(item, 256, 'alt="output"');
         }).join('');
         const date = new Date(log.createdAt || Date.now()).toLocaleString(window.StudioI18n?.lang() === 'en' ? 'en-US' : 'zh-CN');
         const req = log.request || {};
@@ -11737,7 +11798,8 @@ async function completeSaaSGenerationSubmission(node, out, taskInfos){
     node.lastGenerationTaskId = taskIds[0] || '';
     node.runStatus = task.status === 'running' ? 'running' : 'queued';
     node.runError = '';
-    node.running = task.status === 'running';
+    // 任务已提交后保持运行锁，直到终态；避免状态被“允许再次点击”的定时器覆盖。
+    node.running = true;
     if(out){
         const currentIds = new Set((out._pending || []).map(item => item?.canvasTaskId).filter(Boolean));
         const pending = taskIds.filter(taskId => !currentIds.has(taskId)).map(taskId => ({
@@ -11832,13 +11894,61 @@ async function queryRecoverPendingOutput(pendingId){
     }
 }
 function sleep(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
+async function appendCanvasImageTaskMedia(taskId, payload){
+    const found = findPendingTask(taskId);
+    if(!found || !window.SaaSCanvasGateway?.previewMedia) return;
+    const raw = Array.isArray(payload) ? payload : [payload];
+    const media = (await Promise.all(raw.map(item => window.SaaSCanvasGateway.previewMedia(item)))).filter(Boolean);
+    if(!media.length) return;
+    const {out, pending} = found;
+    const gen = nodes.find(n => n.id === pending?.run?.node?.id);
+    const added = (media || []).filter(item => {
+        const url = outputUrlValue(item);
+        return url && !(out.images || []).some(existing => outputUrlValue(existing) === url);
+    });
+    if(!added.length) return;
+    const meta = { runMs: nowMs() - Number(pending.startedAt || nowMs()), run: pending.run || {} };
+    appendOutputImages(out, added, meta.run?.refs?.[0], [meta]);
+    if(gen) mergeGeneratedOutputs(gen, added, true);
+    pending.mediaDelivered = Number(pending.mediaDelivered || 0) + added.length;
+    pending.lastMediaAt = nowMs();
+    refreshRunNodes(gen, out);
+    scheduleSave();
+}
+function updateCanvasImageTaskStatus(taskId, taskData){
+    const found = findPendingTask(taskId);
+    if(!found || !taskData) return;
+    const {out, pending} = found;
+    const gen = nodes.find(n => n.id === pending?.run?.node?.id);
+    if(!gen) return;
+    const status = String(taskData.status || '').toLowerCase();
+    if(status === 'queued' || status === 'running'){
+        gen.runStatus = status;
+        gen.runError = '';
+        // running 仅用于禁止重复提交；状态文案由 runStatus 决定。
+        gen.running = true;
+        pending.canvasTaskStatus = status;
+        refreshRunNodes(gen, out);
+        return;
+    }
+    if(status === 'failed' || status === 'cancelled'){
+        pending.canvasTaskStatus = 'failed';
+        gen.runStatus = 'failed';
+        gen.runError = taskData.failure_message || taskData.error || tr('canvas.generationFailed');
+        refreshRunNodes(gen, out);
+    }
+}
 async function pollCanvasImageTask(taskId, options={}){
     if(!taskId) return 'failed';
     if(activeCanvasTaskPolls.has(taskId)) return 'running';
     activeCanvasTaskPolls.add(taskId);
     try {
         if(window.SaaSCanvasGateway?.streamGenerationTask){
-            const task = await window.SaaSCanvasGateway.streamGenerationTask(taskId);
+            const task = await window.SaaSCanvasGateway.streamGenerationTask(
+                taskId,
+                media => appendCanvasImageTaskMedia(taskId, media),
+                status => updateCanvasImageTaskStatus(taskId, status),
+            );
             const res = await fetch(`/api/canvas-image-tasks/${encodeURIComponent(taskId)}`);
             const data = await res.json();
             if(task.status === 'succeeded'){
@@ -11904,11 +12014,15 @@ function completeCanvasImageTask(taskId, result){
     };
     meta.run.request = requestMetaFromResult(result);
     const images = result.images || [];
+    const newImages = images.filter(item => {
+        const url = outputUrlValue(item);
+        return url && !(out.images || []).some(existing => outputUrlValue(existing) === url);
+    });
     out._pending = (out._pending || []).filter(p => p.id !== pending.id);
-    appendOutputImages(out, images, meta.run?.refs?.[0], [meta]);
+    appendOutputImages(out, newImages, meta.run?.refs?.[0], [meta]);
     const gen = nodes.find(n => n.id === meta.run?.node?.id);
     if(gen){
-        mergeGeneratedOutputs(gen, images, Boolean(pending.appendGenerated));
+        if(images.length) mergeGeneratedOutputs(gen, images, Boolean(pending.appendGenerated) || Boolean(gen.generatedOutputs?.length));
         gen.runStatus = 'done';
         gen.runError = '';
         gen.running = false;
@@ -11983,7 +12097,7 @@ function renderOutputMedia(item, useGridLayout=false){
         const label = kind === 'text' ? 'TEXT' : 'FILE';
         return `<div class="output-img-wrap output-file-wrap" data-output-url="${safe}"${gridStyle}><div class="output-file-card"><i data-lucide="${icon}" class="w-7 h-7"></i><span>${escapeHtml(meta.name || outputImageName(url))}</span><small>${label}</small></div>${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
     }
-    return `<div class="output-img-wrap" data-output-url="${safe}"${gridStyle}>${canvasPreviewImgHtml(url, useGridLayout ? 512 : 768, 'alt="generated output"')}${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
+    return `<div class="output-img-wrap" data-output-url="${safe}"${gridStyle}>${canvasPreviewImgHtml(item, useGridLayout ? 512 : 768, 'alt="generated output"')}${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
 }
 function outputGridLayout(node){
     const images = node?.images || [];
@@ -12794,9 +12908,29 @@ function openOutputLightbox(url, out){
     outputLightboxImg.onload = () => {
         outputResolutionText(`${outputLightboxImg.naturalWidth} x ${outputLightboxImg.naturalHeight}`, meta);
     };
-    outputLightboxImg.src = canvasDisplayMediaUrl(url, outputDownloadName(url));
-    outputCompareResult.src = canvasDisplayMediaUrl(url, outputDownloadName(url));
-    outputCompareOriginal.src = currentOutputCompareUrl ? canvasDisplayMediaUrl(currentOutputCompareUrl, outputDownloadName(currentOutputCompareUrl)) : '';
+    const interactiveItem = meta && Object.keys(meta).length ? {...meta, url} : url;
+    const quickPreview = canvasMediaPreviewUrl(interactiveItem, 1536);
+    outputLightboxImg.src = quickPreview;
+    outputCompareResult.src = quickPreview;
+    const lightboxToken = `${url}:${Date.now()}`;
+    outputLightboxImg.dataset.originalLoadToken = lightboxToken;
+    canvasOriginalForInteraction(interactiveItem).then(originalSrc => {
+        if(!outputLightbox.classList.contains('open')) return;
+        if(currentOutputLightboxUrl !== url || outputLightboxImg.dataset.originalLoadToken !== lightboxToken) return;
+        if(originalSrc){
+            outputLightboxImg.src = originalSrc;
+            outputCompareResult.src = originalSrc;
+        }
+    }).catch(() => {});
+    outputCompareOriginal.src = currentOutputCompareUrl ? canvasMediaPreviewUrl(currentOutputCompareUrl, 1536) : '';
+    if(currentOutputCompareUrl){
+        const compareUrl = currentOutputCompareUrl;
+        canvasOriginalForInteraction(compareUrl).then(originalSrc => {
+            if(currentOutputCompareUrl === compareUrl && outputLightbox.classList.contains('open')){
+                outputCompareOriginal.src = originalSrc;
+            }
+        }).catch(() => {});
+    }
     outputPreview.ondblclick = e => {
         e.stopPropagation();
         if(!currentOutputCompareUrl) return;

@@ -13,7 +13,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 DEFAULT_ACCOUNT_GENERATION_CONCURRENCY = 2
-MAX_ACCOUNT_GENERATION_CONCURRENCY = 20
+MAX_ACCOUNT_GENERATION_CONCURRENCY = 50
 
 _metadata = MetaData()
 _limits = Table(

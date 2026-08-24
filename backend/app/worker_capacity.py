@@ -52,8 +52,8 @@ class WorkerCapacitySettings(Protocol):
 class InMemoryWorkerCapacitySettings:
     """Thread-safe capacity settings for HTTP and worker tests."""
 
-    def __init__(self, deployed_worker_limit: int = 4) -> None:
-        """Seed the in-memory setting with four workers and five slots each."""
+    def __init__(self, deployed_worker_limit: int = 10) -> None:
+        """Seed the in-memory setting with up to ten workers and five slots each."""
         self._deployed_worker_limit = deployed_worker_limit
         self._enabled_workers = deployed_worker_limit
         self._concurrency_per_worker = 5
@@ -230,8 +230,8 @@ def _validate(
         raise InvalidWorkerCapacity(f"启用 Worker 数必须在 1 到 {deployed_worker_limit} 之间")
     if not 1 <= concurrency_per_worker <= 50:
         raise InvalidWorkerCapacity("单 Worker 并发数必须在 1 到 50 之间")
-    if enabled_workers * concurrency_per_worker > 200:
-        raise InvalidWorkerCapacity("Worker 总并发数不能超过 200")
+    if enabled_workers * concurrency_per_worker > 500:
+        raise InvalidWorkerCapacity("Worker 总并发数不能超过 500")
     if not 1 <= global_active_image_limit <= 100_000:
         raise InvalidWorkerCapacity("全站活动图片名额必须在 1 到 100000 之间")
     if not 1 <= task_deadline_minutes <= 120:

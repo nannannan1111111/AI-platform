@@ -17,6 +17,7 @@ import ModelsPage from "./pages/ModelsPage.vue";
 import StorageAllowancePage from "./pages/StorageAllowancePage.vue";
 import UsersPage from "./pages/UsersPage.vue";
 import WalletPage from "./pages/WalletPage.vue";
+import RedeemCodesPage from "./pages/RedeemCodesPage.vue";
 import type { AdminMountOptions } from "./types";
 
 const pages = {
@@ -33,6 +34,7 @@ const pages = {
   "/admin/runninghub-capabilities": RunningHubCapabilitiesPage,
   "/workspace/account": AccountPage,
   "/workspace/wallet": WalletPage,
+  "/admin/redeem-codes": RedeemCodesPage,
   "/workspace/generations": GenerationsPage,
   "/workspace/models": ModelsPage,
   "/workspace/assets": AssetsPage,

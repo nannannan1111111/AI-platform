@@ -145,7 +145,7 @@ echo "running database migrations before starting application traffic"
 docker compose --env-file "$environment_file" -f "$compose_file" run --rm --no-deps migrate
 
 worker_replicas="$(read_environment_value GENERATION_WORKER_REPLICAS)"
-worker_replicas="${worker_replicas:-4}"
+worker_replicas="${worker_replicas:-10}"
 [[ "$worker_replicas" =~ ^[1-9][0-9]*$ ]] || {
   echo "GENERATION_WORKER_REPLICAS must be a positive integer" >&2
   exit 1

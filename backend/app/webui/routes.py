@@ -52,8 +52,13 @@ def mount_web_ui(app: FastAPI) -> None:
 
     @app.get("/workspace/canvases/{canvas_id}/classic", include_in_schema=False)
     def classic_canvas_page(canvas_id: str) -> FileResponse:
-        """Serve the authenticated classic infinite-canvas editor shell."""
-        return FileResponse(_STATIC_ROOT / "canvas.html")
+        """Keep old bookmarks working without re-exposing the retired editor.
+
+        The classic data/API shape remains readable for non-destructive
+        compatibility, but every legacy URL now opens the current smart
+        editor shell. New canvases are created as ``smart`` only.
+        """
+        return FileResponse(_STATIC_ROOT / "smart-canvas.html")
 
     @app.get("/workspace/canvases/{canvas_id}/smart", include_in_schema=False)
     def smart_canvas_page(canvas_id: str) -> FileResponse:

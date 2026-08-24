@@ -15,6 +15,8 @@ const rate = ref<JsonRecord>({ credits_per_cny: "0", preset_payment_cny: [] });
 const selectedProvider = ref("");
 const customAmount = ref("20.00");
 const busyId = ref("");
+const redeemCode = ref("");
+const redeeming = ref(false);
 const balance = computed<JsonRecord>(() => props.bridge.currentBalance || {});
 const orderLabels: Record<string, string> = { pending: "待支付", paid: "已到账", charged_back: "已拒付" };
 const postingLabels: Record<string, string> = { recharge: "充值", admin_grant: "人工充值", reversal: "冲销", freeze: "冻结", settlement: "结算", release: "释放" };
@@ -58,6 +60,13 @@ async function createOrder(path: string, body: JsonRecord, busy: string): Promis
   } catch (caught) { props.bridge.toast(errorMessage(caught)); }
   finally { busyId.value = ""; }
 }
+async function redeem(): Promise<void> {
+  if (!redeemCode.value.trim()) return props.bridge.toast("请输入兑换码");
+  redeeming.value = true;
+  try { const result = await props.bridge.api("/api/v1/redeem-codes/redeem", { method: "POST", body: JSON.stringify({ code: redeemCode.value.trim() }) }); props.bridge.toast(`兑换成功，到账 ${formatCredits(result.credits)} 额度`); redeemCode.value = ""; await load(); }
+  catch (caught) { props.bridge.toast(errorMessage(caught)); }
+  finally { redeeming.value = false; }
+}
 
 onMounted(() => load());
 </script>
@@ -66,6 +75,7 @@ onMounted(() => load());
   <div v-if="loading" class="loading">正在读取钱包…</div><div v-else-if="error" class="empty">{{ error }}</div><template v-else>
     <div class="page-head"><div><h1>钱包</h1><p>查看消费额度、支付途径、充值订单和不可改写的账务记录。</p></div></div>
     <section class="grid two"><article class="stat-card"><span>可用额度</span><strong>{{ formatCredits(balance.available_credits) }}</strong><small>充值取得的额度永久有效</small></article><article class="stat-card"><span>冻结额度</span><strong>{{ formatCredits(balance.frozen_credits) }}</strong><small>生成任务执行期间暂时占用</small></article></section>
+    <section class="panel"><div class="section-head" style="margin-top:0"><div><h2>兑换码</h2><p>输入管理员发放的一次性兑换码，余额会立即到账。</p></div></div><form class="row-actions" @submit.prevent="redeem"><input v-model="redeemCode" placeholder="例如 PW-XXXXXXXX" maxlength="128" required><button class="primary-btn" type="submit" :disabled="redeeming">{{ redeeming ? "兑换中…" : "兑换余额" }}</button></form></section>
     <div class="section-head"><div><h2>支付途径</h2><p>页面只显示渠道名称，不保存或返回任何支付凭据。</p></div></div><div v-if="!methods.length" class="empty">暂未开放支付途径。平台配置后会显示在这里。</div><div v-else class="method-list"><button v-for="method in methods" :key="method.payment_provider" class="method" :class="{ active: selectedProvider === method.payment_provider }" @click="selectedProvider = method.payment_provider"><span class="method-mark">{{ String(method.display_name).slice(0, 1) }}</span><span>{{ method.display_name }}</span></button></div>
     <section class="panel"><div class="section-head" style="margin-top:0"><div><h2>普通充值</h2><p>当前全局比例：<strong>1 元 = {{ formatCredits(rate.credits_per_cny) }} 额度</strong>。</p></div></div><div class="package-grid"><article v-for="payment in presets" :key="payment" class="package-card"><h3>充值 {{ Number(payment) }} 元</h3><div class="price">¥{{ payment }}</div><p>到账 {{ creditsFor(payment) }} 额度</p><button class="primary-btn" :disabled="busyId === `direct-${payment}`" @click="createOrder('/api/v1/recharge-orders/direct', { payment_cny: String(payment) }, `direct-${payment}`)">立即充值</button></article><article class="package-card"><h3>自定义金额</h3><form @submit.prevent="createOrder('/api/v1/recharge-orders/direct', { payment_cny: customAmount }, 'custom')"><div class="field"><label>支付金额（元）</label><input v-model="customAmount" type="number" min="0.01" max="1000000" step="0.01" required></div><p>预计到账 <strong>{{ customPreview }}</strong> 额度</p><button class="primary-btn" type="submit" :disabled="busyId === 'custom'">按此金额充值</button></form></article></div></section>
     <div class="section-head"><div><h2>特惠充值包</h2><p>特惠包使用独立的支付金额和赠送额度。</p></div></div><div v-if="!packages.length" class="empty">当前没有可售特惠充值包。</div><div v-else class="package-grid"><article v-for="item in packages" :key="item.version_id" class="package-card"><h3>{{ item.package_code }}</h3><div class="price">¥{{ item.payment_cny }}</div><p>到账 {{ formatCredits(item.credits) }} 额度</p><button class="primary-btn" :disabled="busyId === item.version_id" @click="createOrder('/api/v1/recharge-orders', { package_version_id: item.version_id }, item.version_id)">创建充值订单</button></article></div>

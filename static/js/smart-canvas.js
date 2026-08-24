@@ -326,6 +326,8 @@ let settings = {
     customWidth:'',
     customHeight:'',
     quality:'auto',
+    outputFormat:'png',
+    inputFidelity:'auto',
     count:1,
     videoProvider:'',
     videoModel:'',
@@ -475,7 +477,13 @@ function smartMediaPreviewUrl(itemOrUrl, size=512){
 function smartPreviewImgHtml(itemOrUrl, size=512, attrs=''){
     const original = smartOriginalMediaUrl(itemOrUrl);
     const preview = smartMediaPreviewUrl(itemOrUrl, size);
-    return `<img src="${escapeHtml(preview)}" data-preview-src="${escapeAttr(preview)}" data-original-src="${escapeAttr(original)}"${attrs ? ` ${attrs}` : ''}>`;
+    return `<img loading="lazy" decoding="async" src="${escapeHtml(preview)}" data-preview-src="${escapeAttr(preview)}" data-original-src="${escapeAttr(original)}"${attrs ? ` ${attrs}` : ''}>`;
+}
+async function smartOriginalForInteraction(itemOrUrl){
+    if(window.SaaSCanvasGateway?.active && window.SaaSCanvasGateway.loadOriginalMedia){
+        return window.SaaSCanvasGateway.loadOriginalMedia(itemOrUrl);
+    }
+    return displayMediaUrl(itemOrUrl);
 }
 function loadSmartOriginalImageDimensions(url){
     const src = displayMediaUrl({url:smartOriginalMediaUrl(url)});
@@ -612,6 +620,15 @@ function smartImageNearViewport(img){
         && rect.bottom >= shellRect.top - margin && rect.top <= shellRect.bottom + margin;
 }
 function syncSmartSelectedImageResolution(root=null){
+    if(window.SaaSCanvasGateway?.active){
+        smartNodeElementsForHighResSync(root).forEach(scope => {
+            scope.querySelectorAll?.('img[data-preview-src]').forEach(img => {
+                const preview = img.dataset.previewSrc || '';
+                if(preview && img.getAttribute('src') !== preview) img.src = preview;
+            });
+        });
+        return;
+    }
     const selectedImages = [];
     const wantHighRes = smartViewportWantsHighRes();
     smartNodeElementsForHighResSync(root).forEach(scope => {
@@ -2399,9 +2416,20 @@ function sanitizeSmartApiSelection(target=settings){
         if(models.length && !models.includes(target.model)) target.model = models[0] || '';
     }
     if((target.engine || 'api') === 'api' && (target.apiKind || 'image') !== 'video'){
-        const allowAuto = isGptImageAutoSizeModel(target.model);
+        const saasApiImage = window.SaaSCanvasGateway?.active;
+        const allowAuto = !saasApiImage && isGptImageAutoSizeModel(target.model);
         if(!target.resolution) target.resolution = allowAuto ? defaultSmartApiResolution(target.model) : '1k';
         if(!allowAuto && target.resolution === 'auto') target.resolution = '1k';
+        if(saasApiImage){
+            if(target.ratio === 'portrait') target.ratio = 'portrait43';
+            if(target.ratio === 'landscape') target.ratio = 'wide';
+            if(!['square','landscape43','wide','portrait43','story','custom'].includes(target.ratio)) target.ratio = 'square';
+            if(!['1k','2k','4k','custom'].includes(target.resolution)) target.resolution = '4k';
+            if(target.ratio === 'custom') target.resolution = 'custom';
+            target.outputFormat = ['png','jpeg','webp'].includes(target.outputFormat) ? target.outputFormat : 'png';
+            target.inputFidelity = ['auto','low','high'].includes(target.inputFidelity) ? target.inputFidelity : 'auto';
+            target.count = Math.max(1, Math.min(5, Number(target.count || 1)));
+        }
     }
     if(target.videoProvider){
         const models = providerVideoModels(target.videoProvider);
@@ -2709,11 +2737,13 @@ function renderApiParams(){
     // 切换平台/模型时保留用户已选的分辨率（记忆），normalizeApiSizeSettings 只会修正非法的 auto。
     normalizeApiSizeSettings('');
     const outpaintLocked = settings.outpaintResolutionLocked === true;
+    const saasApiImage = window.SaaSCanvasGateway?.active && settings.apiKind !== 'video';
     dynamicParams.innerHTML = `
         ${renderProviderControl(providers)}
         ${renderModelControl(models)}
-        ${renderSizePickerControl('', true)}
-        ${renderQualityControl()}
+        ${renderSizePickerControl('', false)}
+        ${saasApiImage ? renderSaaSOutputFormatControl() : renderQualityControl()}
+        ${saasApiImage ? renderSaaSInputFidelityControl() : ''}
         ${renderCountVisualControl()}
     `;
 }
@@ -3110,12 +3140,19 @@ function renderSizePickerControl(prefix='', includeSource=false){
     const customRatioKey = prefix ? `${prefix}CustomRatio` : 'customRatio';
     if(settings[ratioKey] === 'source') applySourceRatioToSettings(prefix);
     const scope = sizePickerScope(prefix);
-    const options = (!prefix && settings.engine === 'api') ? ['auto','1k','2k','4k'] : ['1k','2k','4k'];
+    const saasApiImage = !prefix && window.SaaSCanvasGateway?.active
+        && settings.engine === 'api' && settings.apiKind !== 'video';
+    const options = saasApiImage ? ['1k','2k','4k']
+        : ((!prefix && settings.engine === 'api') ? ['auto','1k','2k','4k'] : ['1k','2k','4k']);
     const currentRes = settings[resKey] || ((!prefix && settings.engine === 'api') ? defaultSmartApiResolution(settings.model) : '1k');
     const currentRatio = settings[ratioKey] || 'square';
     const currentCustomRatio = settings[customRatioKey] || (currentRatio === 'source' ? sourceImageRatioLabel(prefix) : '');
-    const allowAuto = !prefix && settings.engine === 'api' && settings.apiKind !== 'video' && isGptImageAutoSizeModel(settings.model);
-    const ratios = [
+    const allowAuto = !saasApiImage && !prefix && settings.engine === 'api'
+        && settings.apiKind !== 'video' && isGptImageAutoSizeModel(settings.model);
+    const ratios = saasApiImage ? [
+        ['square','1:1','正方形'], ['landscape43','4:3','横图'], ['wide','16:9','宽屏'],
+        ['portrait43','3:4','竖图'], ['story','9:16','竖屏'], ['custom','自定义','自定义像素'],
+    ] : [
         ['square','1:1','正方形'], ['portrait','2:3','竖图'], ['landscape','3:2','横图'], ['portrait43','3:4','竖图'], ['landscape43','4:3','横图'],
         ['story','9:16','竖屏'], ['wide','16:9','宽屏'], ['ultrawide','21:9','超宽'], ['ultratall','9:21','超竖'],
         ...(includeSource ? [['source', sourceImageRatioLabel(prefix) || '原图', '适配输入']] : [])
@@ -3191,14 +3228,35 @@ function renderQualityControl(){
         </div>
     </div>`;
 }
+function renderSaaSOutputFormatControl(){
+    const value = ['png','jpeg','webp'].includes(settings.outputFormat) ? settings.outputFormat : 'png';
+    const labels = {png:'PNG', jpeg:'JPEG', webp:'WEBP'};
+    return `<div class="smart-control quality-control">
+        <button class="smart-pill" type="button"><i data-lucide="file-image"></i><span>${labels[value]}</span></button>
+        <div class="smart-popover compact-popover"><div class="smart-popover-title">格式</div><div class="seg-row">
+            ${Object.entries(labels).map(([key,label]) => `<button type="button" class="${key === value ? 'active' : ''}" data-smart-param="outputFormat" data-smart-value="${key}">${label}</button>`).join('')}
+        </div></div>
+    </div>`;
+}
+function renderSaaSInputFidelityControl(){
+    const value = ['auto','low','high'].includes(settings.inputFidelity) ? settings.inputFidelity : 'auto';
+    const labels = {auto:'自动', low:'低', high:'高'};
+    return `<div class="smart-control quality-control">
+        <button class="smart-pill" type="button"><i data-lucide="shield-check"></i><span>${labels[value]}</span></button>
+        <div class="smart-popover compact-popover"><div class="smart-popover-title">输入保真度</div><div class="seg-row">
+            ${Object.entries(labels).map(([key,label]) => `<button type="button" class="${key === value ? 'active' : ''}" data-smart-param="inputFidelity" data-smart-value="${key}">${label}</button>`).join('')}
+        </div></div>
+    </div>`;
+}
 function renderCountVisualControl(){
     const value = Number(settings.count || 1);
+    const max = window.SaaSCanvasGateway?.active && settings.engine === 'api' && settings.apiKind !== 'video' ? 5 : 8;
     return `<div class="smart-control count-control">
         <button class="smart-pill" type="button"><i data-lucide="copy"></i><span>${value}${tr('smart.countUnit') ? ' ' + escapeHtml(tr('smart.countUnit')) : ''}</span></button>
         <div class="smart-popover compact-popover" style="min-width:170px">
             <div class="smart-popover-title">${escapeHtml(tr('smart.count'))}</div>
             <div class="count-grid">
-                ${[1,2,3,4,5,6,7,8].map(n => `<button type="button" class="count-cell ${n === value ? 'active' : ''}" data-smart-param="count" data-smart-value="${n}">${n}</button>`).join('')}
+                ${Array.from({length:max}, (_, index) => index + 1).map(n => `<button type="button" class="count-cell ${n === value ? 'active' : ''}" data-smart-param="count" data-smart-value="${n}">${n}</button>`).join('')}
             </div>
         </div>
     </div>`;
@@ -3715,6 +3773,10 @@ function setDynamicSetting(key, value){
     const numericKeys = new Set(['count','width','height','videoDuration','enhanceStrength','enhanceUpscaleRes','editUpscaleRes','customRatioWidth','customRatioHeight','customWidth','customHeight','msCustomRatioWidth','msCustomRatioHeight','msCustomWidth','msCustomHeight']);
     const layoutKeys = new Set(['provider_id','model','resolution','ratio','msgenModel','msCustomModel','msResolution','msRatio','videoProvider','videoModel','videoAspect','videoResolution','quality','count','rhConfigKey','rhPayment','rhInstanceType']);
     settings[key] = numericKeys.has(key) && value !== '' ? Number(value) : value;
+    if(key === 'count') settings.count = Math.max(1, Math.min(
+        window.SaaSCanvasGateway?.active && settings.engine === 'api' && settings.apiKind !== 'video' ? 5 : 8,
+        Number(settings.count || 1),
+    ));
     if(key === 'provider_id') settings.model = '';
     if(key === 'videoProvider') settings.videoModel = '';
     if(key === 'videoMultimodal') settings._videoMultimodalUserSet = true;
@@ -3723,6 +3785,10 @@ function setDynamicSetting(key, value){
     if(key === 'resolution'){
         if(settings.resolution === 'custom') settings.ratio = '';
         else if(!settings.ratio) settings.ratio = 'square';
+    }
+    if(key === 'ratio' && window.SaaSCanvasGateway?.active && settings.engine === 'api' && settings.apiKind !== 'video'){
+        if(settings.ratio === 'custom') settings.resolution = 'custom';
+        else if(settings.resolution === 'custom') settings.resolution = '4k';
     }
     if(key === 'ratio') applySourceRatioToSettings('');
     if(key === 'msResolution'){
@@ -6014,10 +6080,19 @@ function resultMediaUrls(result){
             return;
         }
         if(typeof value === 'object'){
-            if(value.url || value.path || value.src || value.uri){
-                const url = value.url || value.path || value.src || value.uri;
+            const mediaId = String(value.media_id || value.mediaId || '').trim();
+            if(value.url || value.path || value.src || value.uri || mediaId){
+                const url = value.url || value.path || value.src || value.uri
+                    || (window.SaaSCanvasGateway?.active && mediaId
+                        ? `/api/v1/media/${encodeURIComponent(mediaId)}/content` : '');
                 if(url){
-                    const item = {url, kind:value.kind || value.type || value.mediaKind || '', name:value.name || value.filename || ''};
+                    const item = {
+                        ...value,
+                        url,
+                        ...(mediaId ? {media_id:mediaId} : {}),
+                        kind:value.kind || value.type || value.mediaKind || '',
+                        name:value.name || value.filename || '',
+                    };
                     ['natural_w','natural_h','width','height','w','h','layout_w','layout_h'].forEach(key => {
                         const n = Number(value[key]);
                         if(Number.isFinite(n) && n > 0) item[key] = n;
@@ -6266,6 +6341,7 @@ function bindImageProxyFallback(imgEl, itemOrUrl){
     if(!imgEl || imgEl.dataset.proxyFallbackBound === '1') return;
     imgEl.dataset.proxyFallbackBound = '1';
     imgEl.addEventListener('error', () => {
+        if(window.SaaSCanvasGateway?.active) return;
         if(imgEl.dataset.proxyFallbackTried === '1') return;
         const fallback = proxiedMediaUrl(itemOrUrl);
         if(!fallback || fallback === imgEl.getAttribute('src')) return;
@@ -6562,7 +6638,10 @@ function openSmartLogLightbox(url, kind='image'){
         const fb = smartMediaPreviewUrl({url}, 2048);
         if(fb && fb !== img.getAttribute('src')) img.src = fb;
     };
-    img.src = displayMediaUrl({url});
+    img.src = smartMediaPreviewUrl({url}, 1536);
+    smartOriginalForInteraction({url}).then(originalSrc => {
+        if(box.classList.contains('open') && img === box.querySelector('img')) img.src = originalSrc;
+    }).catch(() => {});
     box.classList.add('open');
     refreshIcons();
 }
@@ -7300,7 +7379,8 @@ function measureSmartNodeImages(){
         if(!node || !image || image.natural_w || image.natural_h) return;
         const isPreview = isSmartPreviewImage(imgEl);
         const originalSrc = imgEl.dataset?.originalSrc || image.url || '';
-        if(isPreview && imgEl.dataset?.previewKind !== 'video' && originalSrc && !image._naturalSizeLoading){
+        if(isPreview && imgEl.dataset?.previewKind !== 'video' && originalSrc && !image._naturalSizeLoading
+            && !(window.SaaSCanvasGateway?.active && image.media_id)){
             image._naturalSizeLoading = true;
             loadSmartOriginalImageDimensions(originalSrc).then(size => {
                 image._naturalSizeLoading = false;
@@ -8889,7 +8969,8 @@ function panoramaSource(){
     const editing = currentEditImage();
     const image = editing.image || {};
     if(mediaKindForItem(image) !== 'image') return '';
-    return displayMediaUrl(image.url ? image : (image.url || ''));
+    return window.SaaSCanvasGateway?.cachedOriginalMediaUrl?.(image)
+        || displayMediaUrl(image.url ? image : (image.url || ''));
 }
 function panoramaFallbackSource(){
     const image = currentEditImage().image || {};
@@ -9383,7 +9464,7 @@ function refreshComparePanel(){
         currentImg.dataset.proxyFallbackTried = '1';
         currentImg.src = fallback;
     };
-    const previewSrc = displayMediaUrl(editing.image || curUrl);
+    let previewSrc = displayMediaUrl(editing.image || curUrl);
     const quickPreviewSrc = smartMediaPreviewUrl(editing.image || curUrl, 1536);
     const previewToken = `${editing.node?.id || ''}:${editing.index ?? 0}:${Date.now()}`;
     currentImg.dataset.previewSrcToken = previewToken;
@@ -9393,7 +9474,18 @@ function refreshComparePanel(){
         currentImg.dataset.previewQuick = '';
         if(currentImg.getAttribute('src') !== previewSrc) currentImg.src = previewSrc;
     };
-    if(quickPreviewSrc && quickPreviewSrc !== previewSrc){
+    if(window.SaaSCanvasGateway?.active && editing.image?.media_id){
+        currentImg.dataset.proxyFallbackTried = '';
+        currentImg.dataset.previewQuick = '1';
+        if(quickPreviewSrc && currentImg.getAttribute('src') !== quickPreviewSrc) currentImg.src = quickPreviewSrc;
+        smartOriginalForInteraction(editing.image).then(originalSrc => {
+            if(imageEditMode !== 'preview' || !imageEditModal.classList.contains('open')) return;
+            if(currentImg.dataset.previewSrcToken !== previewToken) return;
+            previewSrc = originalSrc;
+            currentImg.dataset.previewQuick = '';
+            if(originalSrc && currentImg.getAttribute('src') !== originalSrc) currentImg.src = originalSrc;
+        }).catch(() => {});
+    } else if(quickPreviewSrc && quickPreviewSrc !== previewSrc){
         currentImg.dataset.proxyFallbackTried = '';
         currentImg.dataset.previewQuick = '1';
         if(currentImg.getAttribute('src') !== quickPreviewSrc) currentImg.src = quickPreviewSrc;
@@ -10313,7 +10405,9 @@ function renderGridJoinPreview(){
             img.dataset.proxyFallbackTried = '1';
             img.src = fallback;
         };
-        img.src = displayMediaUrl(entry.item);
+        smartOriginalForInteraction(entry.item).then(src => { img.src = src; }).catch(() => {
+            img.src = smartMediaPreviewUrl(entry.item, 2048);
+        });
         host.appendChild(img);
     });
     if(countEl) countEl.textContent = `将拼接 ${items.length} 张图片 · 输出长边 ${Math.round(gridJoinOutputSize / 1024)}K`;
@@ -10605,7 +10699,7 @@ function openImageEditor(nodeId, imageIndex=0){
     // 原图加载失败时的兜底链：依次尝试 download-output 代理、缩略图同款的 media-preview 代理（PIL 渲染，
     // 对截断/半下载的文件比浏览器宽容，所以缩略图能显示而原图破损时它仍能出图）。兜底时去掉 crossOrigin——
     // 预览不需要导出画布，带 crossOrigin 反而会因跨域/CORS 直接加载失败。
-    const primaryEditorSrc = displayMediaUrl(image);
+    let primaryEditorSrc = displayMediaUrl(image);
     const editorFallbackUrls = [proxiedMediaUrl(image), smartMediaPreviewUrl(image, 2048)]
         .filter(Boolean)
         .filter((u, i, arr) => u !== primaryEditorSrc && arr.indexOf(u) === i);
@@ -10644,7 +10738,17 @@ function openImageEditor(nodeId, imageIndex=0){
         img.dataset.editorQuick = '';
         if(img.getAttribute('src') !== primaryEditorSrc) img.src = primaryEditorSrc;
     };
-    if(quickEditorSrc && quickEditorSrc !== primaryEditorSrc){
+    if(window.SaaSCanvasGateway?.active && image.media_id){
+        img.dataset.editorQuick = '1';
+        img.src = quickEditorSrc || image.thumbnail || '';
+        smartOriginalForInteraction(image).then(originalSrc => {
+            if(!cropState || cropState.nodeId !== nodeId || cropState.imageIndex !== imageIndex) return;
+            if(!imageEditModal.classList.contains('open') || img.dataset.editorSrcToken !== editorSrcToken) return;
+            primaryEditorSrc = originalSrc;
+            img.dataset.editorQuick = '';
+            if(originalSrc && img.getAttribute('src') !== originalSrc) img.src = originalSrc;
+        }).catch(() => {});
+    } else if(quickEditorSrc && quickEditorSrc !== primaryEditorSrc){
         img.dataset.editorQuick = '1';
         img.src = quickEditorSrc;
         requestAnimationFrame(() => setTimeout(loadFullEditorImage, 120));
@@ -10998,7 +11102,7 @@ function loadGridJoinImage(entry){
             img.dataset.proxyFallbackTried = '1';
             img.src = fallback;
         };
-        img.src = displayMediaUrl(entry.item);
+        smartOriginalForInteraction(entry.item).then(src => { img.src = src; }).catch(reject);
     });
 }
 function drawImageCover(ctx, img, dx, dy, dw, dh){
@@ -13722,7 +13826,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         const runLog = smartRunSnapshot(rootNode, prompt, request.refs || [], logKind);
         const runLogStart = nowMs();
         const expectedCount = isApiLikeEngine(runSettings.engine) && runSettings.apiKind !== 'video'
-            ? Math.max(1, Math.min(8, Number(runSettings.count || 1)))
+            ? Math.max(1, Math.min(window.SaaSCanvasGateway?.active ? 5 : 8, Number(runSettings.count || 1)))
             : 1;
         outputSlot.queued = false;
         outputSlot.running = true;
@@ -14136,7 +14240,10 @@ async function runGeneration(){
     const runLog = smartRunSnapshot(node, prompt, refs, logKind);
     rememberRecentSmartSettings(settings, node);
     const runLogStart = nowMs();
-    const expectedCount = settings.engine === 'runninghub' ? 1 : Math.max(1, Math.min(8, Number(settings.count || 1)));
+    const expectedCount = settings.engine === 'runninghub' ? 1 : Math.max(
+        1,
+        Math.min(window.SaaSCanvasGateway?.active && settings.apiKind !== 'video' ? 5 : 8, Number(settings.count || 1)),
+    );
     const apiConcurrentRun = isApiLikeEngine(settings.engine) || settings.engine === 'runninghub' || settings.engine === 'modelscope';
     const nodeHasImages = isSmartGroupNode(node) ? imagesForNode(node).some(img => img?.url) : (node.images || []).some(img => img?.url);
     const workflowModeRun = smartImageUsesWorkflowInput(node, smartLoopContext);
@@ -14346,15 +14453,22 @@ async function rollbackPreparedSaaSGenerationSubmission(node, taskId){
 }
 async function runApiGeneration(prompt, refs, runSettings=settings, bindingNode=null){
     if(!window.SaaSCanvasGateway?.active && (!runSettings.provider_id || !runSettings.model)) throw new Error(tr('smart.errNoApiModel'));
-    const count = Math.max(1, Math.min(8, Number(runSettings.count || 1)));
+    const saasApiImage = window.SaaSCanvasGateway?.active && runSettings.apiKind !== 'video';
+    const count = Math.max(1, Math.min(saasApiImage ? 5 : 8, Number(runSettings.count || 1)));
+    const isCustom = runSettings.ratio === 'custom' || runSettings.resolution === 'custom';
     const payload = {
         prompt,
         provider_id:runSettings.provider_id,
         model:runSettings.model,
         size:sizeForRun(runSettings),
-        aspect_ratio:API_RATIO_VALUES[runSettings.ratio] || (runSettings.ratio === 'custom' ? String(runSettings.customRatio || '').trim() : ''),
+        aspect_ratio:API_RATIO_VALUES[runSettings.ratio] || (runSettings.ratio === 'custom' ? 'custom' : ''),
         resolution:['1k','2k','4k','custom'].includes(runSettings.resolution) ? runSettings.resolution : '',
-        quality:runSettings.quality || 'auto',
+        ...(saasApiImage ? {
+            resolution_tier: isCustom ? 'custom' : (['1k','2k','4k'].includes(runSettings.resolution) ? runSettings.resolution : '4k'),
+            output_format: ['png','jpeg','webp'].includes(runSettings.outputFormat) ? runSettings.outputFormat : 'png',
+            input_fidelity: refs?.length && ['auto','low','high'].includes(runSettings.inputFidelity) ? runSettings.inputFidelity : 'auto',
+            quality: 'auto',
+        } : {quality:runSettings.quality || 'auto'}),
         n:1,
         canvas_id:canvas?.id || '',
         reference_images:imageRefsOnly(refs).slice(0, SMART_REFERENCE_IMAGE_MAX)

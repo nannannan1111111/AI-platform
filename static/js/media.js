@@ -7,6 +7,11 @@ function mediaUrlValue(itemOrUrl) {
     return typeof itemOrUrl === 'string' ? itemOrUrl : itemOrUrl?.url || '';
 }
 
+function explicitPreviewUrl(itemOrUrl) {
+    if (!itemOrUrl || typeof itemOrUrl !== 'object') return '';
+    return itemOrUrl.thumbnail || itemOrUrl.thumb || itemOrUrl.preview_url || itemOrUrl.previewUrl || '';
+}
+
 function isLocalMediaUrl(url) {
     return LOCAL_MEDIA_PREFIXES.some(prefix => url.startsWith(prefix));
 }
@@ -65,6 +70,8 @@ export function displayMediaUrl(itemOrUrl, name = '') {
 
 /** 为支持的本地图片和视频生成限制尺寸的同源预览地址。 */
 export function mediaPreviewUrl(itemOrUrl, size = 512, {useAbsolutePath = false} = {}) {
+    const explicit = safeBrowserMediaUrl(explicitPreviewUrl(itemOrUrl));
+    if (explicit) return explicit;
     const raw = originalMediaUrl(itemOrUrl);
     const displayUrl = displayMediaUrl(
         typeof itemOrUrl === 'object' && itemOrUrl ? {...itemOrUrl, url: raw} : raw,

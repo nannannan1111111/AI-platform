@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app.accounts import InMemoryAccountAccess
 from app.canvases import CanvasCreation, InMemoryCanvases
@@ -234,11 +235,21 @@ def test_owner_reads_generated_image_content_until_exact_24_hour_expiration(tmp_
     assert "temporary" not in response.headers.get("content-location", "")
     assert client.get("/api/v1/media/media-1/content", headers=other_headers).status_code == 404
 
+    thumbnail = client.get("/api/v1/media/media-1/thumbnail?size=64", headers=owner_headers)
+    assert thumbnail.status_code == 200
+    assert thumbnail.headers["content-type"] == "image/webp"
+    assert thumbnail.headers["cache-control"] == "private, no-store"
+    with Image.open(io.BytesIO(thumbnail.content)) as preview:
+        assert preview.size == (1, 1)
+    assert client.get("/api/v1/media/media-1/thumbnail?size=64", headers=other_headers).status_code == 404
+    assert client.get("/api/v1/media/media-1/thumbnail?size=32", headers=owner_headers).status_code == 422
+
     registered = media.get(owner.account_space_id, "media-1")
     current_time[0] = now + timedelta(hours=24)
     refreshed_session = accounts.login("owner@example.com", "a-correct-horse-battery-staple")
     refreshed_headers = {"Authorization": f"Bearer {refreshed_session.access_token}"}
 
     assert client.get("/api/v1/media/media-1/content", headers=refreshed_headers).status_code == 404
+    assert client.get("/api/v1/media/media-1/thumbnail?size=64", headers=refreshed_headers).status_code == 404
     with pytest.raises(FileNotFoundError):
         objects.read(registered.object_key)

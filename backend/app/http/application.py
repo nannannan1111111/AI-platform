@@ -21,6 +21,7 @@ from urllib.parse import parse_qsl, unquote
 
 from fastapi import BackgroundTasks, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import PlainTextResponse, StreamingResponse
+from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.account_generation_limits import AccountGenerationLimits
@@ -216,6 +217,7 @@ from app.user_llm import (
     UserLLMUpstreamError,
 )
 from app.webui import mount_web_ui
+from app.redeem_codes import RedeemCodeError, RedeemCodeNotFound, RedeemCodeUnavailable
 from app.worker_capacity import InvalidWorkerCapacity, WorkerCapacitySettings
 
 _WORKFLOW_MAX_JSON_BYTES = 10 * 1024 * 1024
@@ -388,6 +390,14 @@ class _RechargePackagePublication(BaseModel):
     credits: str
     effective_from: datetime
 
+class _RedeemCodeCreate(BaseModel):
+    count: int = Field(default=1, ge=1, le=1000)
+    credits: str = Field(min_length=1, max_length=32)
+    expires_at: datetime | None = None
+
+class _RedeemCodeBody(BaseModel):
+    code: str = Field(min_length=6, max_length=128)
+
 
 class _ModelPricePublication(BaseModel):
     logical_model: str
@@ -456,7 +466,7 @@ class _StorageAllowanceUpdate(BaseModel):
 
 
 class _AccountGenerationLimitUpdate(BaseModel):
-    execution_concurrency: int = Field(ge=1, le=20)
+    execution_concurrency: int = Field(ge=1, le=50)
 
 
 class _WorkerCapacityUpdate(BaseModel):
@@ -872,6 +882,7 @@ def create_app(
     canvases: Canvases | None = None,
     model_prices: ModelPrices | None = None,
     recharge_packages: RechargePackages | None = None,
+    redeem_codes: object | None = None,
     recharge_orders: RechargeOrders | None = None,
     recharge_order_chargebacks: RechargeOrderChargebacks | None = None,
     payment_methods: PaymentMethods | None = None,
@@ -1272,6 +1283,38 @@ def create_app(
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录已失效") from exc
             return asdict(statement)
 
+    if redeem_codes is not None and credit_accounting is not None:
+        @app.post("/api/v1/redeem-codes/redeem")
+        def redeem_balance(body: _RedeemCodeBody, authorization: Annotated[str | None, Header()] = None) -> dict[str, object]:
+            try:
+                current = accounts.current_user(_bearer_token(authorization))
+                return redeem_codes.redeem(body.code, current.account_space_id)
+            except InvalidSession as exc:
+                raise HTTPException(status_code=401, detail="登录已失效") from exc
+            except RedeemCodeNotFound as exc:
+                raise HTTPException(status_code=404, detail="兑换码不存在") from exc
+            except RedeemCodeUnavailable as exc:
+                raise HTTPException(status_code=409, detail="兑换码已使用、停用或已过期") from exc
+            except RedeemCodeError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if admin_authorizer is not None:
+            @app.get("/api/v1/admin/redeem-codes")
+            def admin_redeem_codes(authorization: Annotated[str | None, Header()] = None) -> list[dict[str, object]]:
+                _require_platform_admin(authorization, admin_authorizer)
+                return redeem_codes.list()
+
+            @app.post("/api/v1/admin/redeem-codes", status_code=201)
+            def admin_create_redeem_codes(body: _RedeemCodeCreate, authorization: Annotated[str | None, Header()] = None) -> list[dict[str, object]]:
+                token = _bearer_token(authorization); _require_platform_admin(authorization, admin_authorizer)
+                return redeem_codes.create(body.count, body.credits, expires_at=body.expires_at, created_by=token)
+
+            @app.post("/api/v1/admin/redeem-codes/{code_id}/disable")
+            def admin_disable_redeem_code(code_id: str, authorization: Annotated[str | None, Header()] = None) -> dict[str, object]:
+                _require_platform_admin(authorization, admin_authorizer)
+                try: return redeem_codes.disable(code_id)
+                except RedeemCodeNotFound as exc: raise HTTPException(status_code=404, detail="兑换码不存在或已不可停用") from exc
+
     if account_directory is not None and credit_accounting is not None and admin_authorizer is not None:
 
         def admin_user_projection(user: RegisteredUser) -> dict[str, object]:
@@ -1438,6 +1481,19 @@ def create_app(
                         detail=str(exc),
                     ) from exc
                 return asdict(limit)
+
+        @app.put("/api/v1/admin/generation-limit")
+        def update_all_generation_limits(
+            request: _AccountGenerationLimitUpdate,
+            authorization: Annotated[str | None, Header()] = None,
+        ) -> dict[str, object]:
+            """Apply one execution limit to every currently registered account."""
+            _require_platform_admin(authorization, admin_authorizer)
+            updated = 0
+            for user in account_directory.list_registered_users():
+                account_generation_limits.update(user.account_space_id, request.execution_concurrency)
+                updated += 1
+            return {"execution_concurrency": request.execution_concurrency, "updated_users": updated, "max_concurrency": 50}
 
         @app.post("/api/v1/admin/users/{user_id}/credit-grants", status_code=status.HTTP_201_CREATED)
         def grant_user_credits(
@@ -3261,6 +3317,7 @@ def create_app(
 
         @app.get("/api/v1/reference-media/recent")
         def recent_reference_media(
+            limit: Annotated[int, Query(ge=1, le=50)] = 12,
             authorization: Annotated[str | None, Header()] = None,
         ) -> list[dict[str, object]]:
             token = _bearer_token(authorization)
@@ -3272,7 +3329,7 @@ def create_app(
                 )
             except InvalidSession as exc:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录已失效") from exc
-            return [_public_reference_media(media) for media in recent]
+            return [_public_reference_media(media) for media in recent[:limit]]
 
         @app.delete("/api/v1/reference-media/{media_id}", status_code=status.HTTP_204_NO_CONTENT)
         def delete_reference_media(
@@ -3313,6 +3370,49 @@ def create_app(
                 content=available.content,
                 media_type=available.media.mime_type,
                 headers={"Cache-Control": "private, no-store"},
+            )
+
+        @app.get("/api/v1/reference-media/{media_id}/thumbnail")
+        def reference_media_thumbnail(
+            media_id: str,
+            size: Annotated[int, Query(ge=64, le=2048)] = 512,
+            authorization: Annotated[str | None, Header()] = None,
+        ) -> Response:
+            """Return a bounded preview so workbench restore never downloads originals."""
+            token = _bearer_token(authorization)
+            try:
+                current = accounts.current_user(token)
+                available = reference_media.read(
+                    current.account_space_id,
+                    media_id,
+                    at=(clock or (lambda: datetime.now(UTC)))(),
+                )
+            except InvalidSession as exc:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录已失效") from exc
+            except (ReferenceMediaNotFound, ReferenceMediaExpired) as exc:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="参考图片不存在") from exc
+            if available.media.mime_type not in {"image/png", "image/jpeg", "image/webp"}:
+                raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="媒体不支持图片预览")
+            try:
+                with Image.open(io.BytesIO(available.content)) as source:
+                    image = ImageOps.exif_transpose(source)
+                    image.thumbnail((size, size), Image.Resampling.LANCZOS, reducing_gap=3.0)
+                    if image.mode not in {"RGB", "RGBA"}:
+                        image = image.convert("RGBA" if "transparency" in image.info else "RGB")
+                    output = io.BytesIO()
+                    image.save(
+                        output,
+                        format="WEBP",
+                        quality=82,
+                        method=4,
+                        lossless=image.mode == "RGBA",
+                    )
+            except (UnidentifiedImageError, OSError, ValueError) as exc:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="图片预览生成失败") from exc
+            return Response(
+                content=output.getvalue(),
+                media_type="image/webp",
+                headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
             )
 
     if generation_tasks is not None:
@@ -3807,11 +3907,7 @@ def create_app(
                         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
                     return _public_reference_media(reference)
 
-            @app.get("/api/v1/media/{media_id}/content")
-            def get_generated_media_content(
-                media_id: str,
-                authorization: Annotated[str | None, Header()] = None,
-            ) -> Response:
+            def readable_generated_media(media_id: str, authorization: str | None) -> tuple[GeneratedMediaRecord, bytes]:
                 token = _bearer_token(authorization)
                 try:
                     current = accounts.current_user(token)
@@ -3832,6 +3928,48 @@ def create_app(
                     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录已失效") from exc
                 except (GeneratedMediaNotFound, FileNotFoundError) as exc:
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="媒体不存在") from exc
+                return media, content
+
+            @app.get("/api/v1/media/{media_id}/thumbnail")
+            def get_generated_media_thumbnail(
+                media_id: str,
+                size: Annotated[int, Query(ge=64, le=2048)] = 512,
+                authorization: Annotated[str | None, Header()] = None,
+            ) -> Response:
+                media, content = readable_generated_media(media_id, authorization)
+                if media.kind != "image" or media.mime_type not in {"image/png", "image/jpeg", "image/webp"}:
+                    raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="媒体不支持图片预览")
+                try:
+                    with Image.open(io.BytesIO(content)) as source:
+                        image = ImageOps.exif_transpose(source)
+                        image.thumbnail((size, size), Image.Resampling.LANCZOS, reducing_gap=3.0)
+                        if image.mode not in {"RGB", "RGBA"}:
+                            image = image.convert("RGBA" if "transparency" in image.info else "RGB")
+                        output = io.BytesIO()
+                        image.save(
+                            output,
+                            format="WEBP",
+                            quality=82,
+                            method=4,
+                            lossless=image.mode == "RGBA",
+                        )
+                except (UnidentifiedImageError, OSError, ValueError) as exc:
+                    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="图片预览生成失败") from exc
+                return Response(
+                    content=output.getvalue(),
+                    media_type="image/webp",
+                    headers={
+                        "Cache-Control": "private, no-store",
+                        "X-Content-Type-Options": "nosniff",
+                    },
+                )
+
+            @app.get("/api/v1/media/{media_id}/content")
+            def get_generated_media_content(
+                media_id: str,
+                authorization: Annotated[str | None, Header()] = None,
+            ) -> Response:
+                media, content = readable_generated_media(media_id, authorization)
                 return Response(
                     content=content,
                     media_type=media.mime_type,

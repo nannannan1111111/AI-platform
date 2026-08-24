@@ -19,6 +19,8 @@ const searching = ref(false);
 const savingConcurrency = ref(false);
 const grantingCredits = ref(false);
 const concurrency = ref(2);
+const globalConcurrency = ref(2);
+const savingGlobalConcurrency = ref(false);
 const grantCredits = ref("");
 const grantReason = ref("");
 const typeLabels: Record<string, string> = { payment_recharge: "支付充值", admin_recharge: "人工充值", reversal: "充值冲正" };
@@ -102,6 +104,17 @@ async function saveConcurrency(): Promise<void> {
   }
 }
 
+async function saveGlobalConcurrency(): Promise<void> {
+  savingGlobalConcurrency.value = true;
+  try {
+    const result = await props.bridge.api("/api/v1/admin/generation-limit", { method: "PUT", body: JSON.stringify({ execution_concurrency: Number(globalConcurrency.value) }) });
+    props.bridge.toast(`已统一设置 ${Number(result.updated_users || 0)} 个用户的并发`);
+    if (selectedUser.value) await refreshSelected();
+    await loadActivity();
+  } catch (caught) { props.bridge.toast(errorMessage(caught)); }
+  finally { savingGlobalConcurrency.value = false; }
+}
+
 async function grant(): Promise<void> {
   if (!selectedUser.value) return;
   const credits = String(grantCredits.value).trim();
@@ -147,13 +160,14 @@ onMounted(loadActivity);
   <template v-else>
     <div class="page-head"><div><h1>用户管理</h1><p>按邮箱查找并配置单个用户，同时查看各周期的额度消耗与任务质量。</p></div></div>
     <section class="panel admin-user-lookup">
+      <form class="admin-user-control-card" @submit.prevent="saveGlobalConcurrency"><div><strong>统一设置所有用户并发</strong><small>立即应用到当前所有注册用户，新用户默认沿用平台默认值。</small></div><div class="row-actions"><input v-model.number="globalConcurrency" type="number" min="1" max="50" required aria-label="所有用户统一并发数"><button class="primary-btn" type="submit" :disabled="savingGlobalConcurrency">{{ savingGlobalConcurrency ? "保存中…" : "应用到所有用户" }}</button></div></form>
       <div class="section-head" style="margin-top:0"><div><h2>按邮箱设置用户</h2><p>不会默认列出所有用户；请输入完整注册邮箱。</p></div></div>
       <form class="admin-user-search" @submit.prevent="searchUser"><input v-model="email" type="email" required placeholder="user@example.com"><button class="primary-btn" type="submit" :disabled="searching">{{ searching ? "查找中…" : "查找用户" }}</button></form>
       <div v-if="!selectedUser" class="empty admin-user-search-empty">输入完整邮箱并点击查找，再进行充值或并发设置。</div>
       <template v-else>
         <div class="admin-selected-user-head"><div><strong>{{ selectedUser.email }}</strong><span class="status" :class="selectedUser.email_verified ? 'healthy' : 'unknown'">{{ selectedUser.email_verified ? "邮箱已验证" : "邮箱未验证" }}</span></div><div>可用额度 <b>{{ formatCredits(selectedUser.available_credits) }}</b> · 冻结额度 <b>{{ formatCredits(selectedUser.frozen_credits) }}</b></div></div>
         <div class="admin-user-control-grid">
-          <form class="admin-user-control-card" @submit.prevent="saveConcurrency"><div><strong>设置生成并发</strong><small>允许 1–20，超出任务继续排队。</small></div><div class="row-actions"><input v-model.number="concurrency" type="number" min="1" max="20" required aria-label="单用户执行并发数"><button class="secondary-btn" type="submit" :disabled="savingConcurrency">{{ savingConcurrency ? "保存中…" : "保存并发" }}</button></div></form>
+          <form class="admin-user-control-card" @submit.prevent="saveConcurrency"><div><strong>设置生成并发</strong><small>允许 1–50，超出任务继续排队。</small></div><div class="row-actions"><input v-model.number="concurrency" type="number" min="1" max="50" required aria-label="单用户执行并发数"><button class="secondary-btn" type="submit" :disabled="savingConcurrency">{{ savingConcurrency ? "保存中…" : "保存并发" }}</button></div></form>
           <form class="admin-user-control-card" @submit.prevent="grant"><div><strong>人工充值</strong><small>充值会形成永久账务记录。</small></div><div class="row-actions"><input v-model="grantCredits" type="number" min="0.0001" step="0.0001" required placeholder="额度"><input v-model="grantReason" required maxlength="255" placeholder="充值原因"><button class="primary-btn" type="submit" :disabled="grantingCredits">{{ grantingCredits ? "充值中…" : "确认充值" }}</button></div></form>
         </div>
         <button class="text-btn" type="button" @click="loadRecords">查看此用户充值记录</button>
