@@ -9,6 +9,8 @@ class RechargeOrderStatus(StrEnum):
     """充值订单的支付生命周期状态。"""
 
     PENDING = "pending"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
     PAID = "paid"
     CHARGED_BACK = "charged_back"
 
@@ -39,6 +41,10 @@ class RechargeOrderPaymentAlreadyFinalized(ValueError):
 
 class RechargeOrderChargebackNotAllowed(ValueError):
     """充值订单当前状态不允许记录拒付。"""
+
+
+class RechargeOrderCancellationNotAllowed(ValueError):
+    """充值订单当前状态不允许由用户取消。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,3 +115,6 @@ class RechargeOrder:
     recharge_posting_id: str = ""
     charged_back_at: datetime | None = None
     chargeback_reference: str = ""
+    expires_at: datetime | None = None
+    cancelled_at: datetime | None = None
+    cancellation_reason: str = ""

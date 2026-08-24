@@ -1,5 +1,6 @@
 """充值订单 Module 的公开 Interface。"""
 
+from datetime import datetime
 from typing import Protocol
 
 from app.orders.models import (
@@ -25,6 +26,9 @@ class RechargeOrders(Protocol):
 
     def list(self, account_space_id: str) -> tuple[RechargeOrder, ...]:
         """按创建时间和订单标识倒序读取账户空间拥有的订单。"""
+
+    def cancel(self, account_space_id: str, order_id: str, *, occurred_at: datetime) -> RechargeOrder:
+        """取消仍在有效期内的待支付订单。"""
 
     def record_payment_success(self, event: PaymentSuccess) -> RechargeOrder:
         """校验支付成功通知并完成一次额度入账；重复通知可安全重放。"""

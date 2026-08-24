@@ -20,3 +20,9 @@
 ## 数据保护
 
 历史 `classic` 画布只改变入口和展示状态，不删除记录或其中的图片/参考图/生成记录；任务和额度流水沿用原有保留策略。
+
+## V1.0.1 迁移链修复
+
+- 基于生产 V26 容器只读核实的真实迁移链补回 `0062_generation_timeout_headroom`、`0063_generated_media_thumbnails` 和 `0064_recharge_order_expiration`，未执行生产迁移。
+- 补齐充值订单 `expires_at`/取消状态的内存与 SQLAlchemy 持久化，以及订单取消接口；不删除历史订单或账务流水。
+- 画布网关在非成功任务阶段不请求媒体列表，并对宿主未暴露 `window.setTimeout` 的情况使用全局计时器兜底。

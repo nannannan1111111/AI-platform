@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -23,6 +23,7 @@ from app.orders.models import (
     PaymentSuccess,
     RechargeOrder,
     RechargeOrderAlreadyExists,
+    RechargeOrderCancellationNotAllowed,
     RechargeOrderChargebackNotAllowed,
     RechargeOrderNotFound,
     RechargeOrderPaymentAlreadyFinalized,
@@ -44,6 +45,9 @@ _recharge_orders = Table(
     Column("payment_provider", String(64), nullable=False),
     Column("idempotency_key", String(255), nullable=False),
     Column("status", String(32), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("cancelled_at", DateTime(timezone=True), nullable=True),
+    Column("cancellation_reason", String(32), nullable=True),
     Column("paid_at", DateTime(timezone=True), nullable=True),
     Column("payment_reference", String(255), nullable=True),
     Column("recharge_posting_id", String(36), nullable=True),
@@ -128,6 +132,7 @@ class SqlAlchemyRechargeOrders:
                 status=RechargeOrderStatus.PENDING,
                 created_at=submission.created_at,
                 updated_at=submission.created_at,
+                expires_at=submission.created_at + timedelta(minutes=1),
             )
             try:
                 database.execute(insert(_recharge_orders).values(**_order_values(order)))
@@ -159,6 +164,7 @@ class SqlAlchemyRechargeOrders:
                 status=RechargeOrderStatus.PENDING,
                 created_at=submission.created_at,
                 updated_at=submission.created_at,
+                expires_at=submission.created_at + timedelta(minutes=1),
             )
             try:
                 database.execute(insert(_recharge_orders).values(**_order_values(order)))
@@ -167,21 +173,43 @@ class SqlAlchemyRechargeOrders:
             return order
 
     def get(self, account_space_id: str, order_id: str) -> RechargeOrder:
-        with self._session_factory() as database:
-            row = _order_row(database, order_id, account_space_id=account_space_id)
-        if row is None:
-            raise RechargeOrderNotFound(order_id)
-        return _order_from_row(row)
+        with self._session_factory.begin() as database:
+            row = _order_row(database, order_id, account_space_id=account_space_id, for_update=True)
+            if row is None:
+                raise RechargeOrderNotFound(order_id)
+            return _expire_if_due(database, _order_from_row(row), self._clock())
 
     def list(self, account_space_id: str) -> tuple[RechargeOrder, ...]:
         """按最新创建优先读取账户空间拥有的充值订单。"""
-        with self._session_factory() as database:
+        with self._session_factory.begin() as database:
             rows = database.execute(
                 select(_recharge_orders)
                 .where(_recharge_orders.c.account_space_id == account_space_id)
                 .order_by(_recharge_orders.c.created_at.desc(), _recharge_orders.c.id.desc())
             ).mappings()
-            return tuple(_order_from_row(row) for row in rows)
+            now = self._clock()
+            return tuple(_expire_if_due(database, _order_from_row(row), now) for row in rows)
+
+    def cancel(self, account_space_id: str, order_id: str, *, occurred_at: datetime) -> RechargeOrder:
+        """Persist an owner-requested cancellation while the order is pending."""
+        with self._session_factory.begin() as database:
+            row = _order_row(database, order_id, account_space_id=account_space_id, for_update=True)
+            if row is None:
+                raise RechargeOrderNotFound(order_id)
+            order = _expire_if_due(database, _order_from_row(row), occurred_at)
+            if order.status is RechargeOrderStatus.CANCELLED:
+                return order
+            if order.status is not RechargeOrderStatus.PENDING:
+                raise RechargeOrderCancellationNotAllowed(order_id)
+            cancelled = replace(
+                order,
+                status=RechargeOrderStatus.CANCELLED,
+                updated_at=occurred_at,
+                cancelled_at=occurred_at,
+                cancellation_reason="user_cancelled",
+            )
+            _update_order(database, cancelled)
+            return cancelled
 
     def record_payment_success(self, event: PaymentSuccess) -> RechargeOrder:
         with self._session_factory.begin() as database:
@@ -355,6 +383,9 @@ def _order_values(order: RechargeOrder) -> dict[str, Any]:
         "payment_provider": order.payment_provider,
         "idempotency_key": order.idempotency_key,
         "status": order.status.value,
+        "expires_at": order.expires_at or (order.created_at + timedelta(minutes=1)),
+        "cancelled_at": order.cancelled_at,
+        "cancellation_reason": order.cancellation_reason or None,
         "paid_at": order.paid_at,
         "payment_reference": order.payment_reference or None,
         "recharge_posting_id": order.recharge_posting_id or None,
@@ -393,6 +424,9 @@ def _order_from_row(row: Any) -> RechargeOrder:
         recharge_posting_id=str(row["recharge_posting_id"] or ""),
         charged_back_at=aware(row["charged_back_at"]),
         chargeback_reference=str(row["chargeback_reference"] or ""),
+        expires_at=aware(row["expires_at"]) or created_at,
+        cancelled_at=aware(row["cancelled_at"]),
+        cancellation_reason=str(row["cancellation_reason"] or ""),
     )
 
 
@@ -411,4 +445,24 @@ def _matches_direct_submission(order: RechargeOrder, submission: DirectRechargeO
         and order.payment_cny == submission.payment_cny
         and order.credits == submission.credits
         and order.payment_provider == submission.payment_provider
+    )
+
+
+def _expire_if_due(database: Session, order: RechargeOrder, occurred_at: datetime) -> RechargeOrder:
+    if order.status is not RechargeOrderStatus.PENDING or not order.expires_at or occurred_at < order.expires_at:
+        return order
+    expired = replace(
+        order,
+        status=RechargeOrderStatus.EXPIRED,
+        updated_at=occurred_at,
+        cancelled_at=occurred_at,
+        cancellation_reason="expired",
+    )
+    _update_order(database, expired)
+    return expired
+
+
+def _update_order(database: Session, order: RechargeOrder) -> None:
+    database.execute(
+        update(_recharge_orders).where(_recharge_orders.c.id == order.order_id).values(**_order_values(order))
     )

@@ -79,7 +79,9 @@
   async function saasFetch(path, options = {}) {
     const { timeoutMs = 15_000, ...requestOptions } = options;
     const controller = new AbortController();
-    const timeoutHandle = timeoutMs > 0 ? window.setTimeout(() => controller.abort(), timeoutMs) : 0;
+    const timeoutHandle = timeoutMs > 0
+      ? (window.setTimeout || globalThis.setTimeout)(() => controller.abort(), timeoutMs)
+      : 0;
     const externalSignal = requestOptions.signal;
     const abortFromCaller = () => controller.abort(externalSignal.reason);
     if (externalSignal) {
@@ -95,7 +97,7 @@
       }
       throw error;
     } finally {
-      if (timeoutHandle) window.clearTimeout(timeoutHandle);
+      if (timeoutHandle) (window.clearTimeout || globalThis.clearTimeout)(timeoutHandle);
       externalSignal?.removeEventListener('abort', abortFromCaller);
     }
     if (response.status === 401) {
@@ -414,6 +416,7 @@
     const taskResponse = await saasFetch(`/api/v1/generation-tasks/${encodeURIComponent(taskId)}`);
     if (!taskResponse.ok) return { task: null, media: [] };
     const task = await taskResponse.json();
+    if (task?.status !== 'succeeded') return { task, media: [] };
     const mediaResponse = await saasFetch(
       `/api/v1/generation-tasks/${encodeURIComponent(taskId)}/media`,
     );

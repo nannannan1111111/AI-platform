@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from threading import RLock
 from uuid import uuid4
 
@@ -18,6 +18,7 @@ from app.orders.models import (
     PaymentSuccess,
     RechargeOrder,
     RechargeOrderAlreadyExists,
+    RechargeOrderCancellationNotAllowed,
     RechargeOrderChargebackNotAllowed,
     RechargeOrderNotFound,
     RechargeOrderPaymentAlreadyFinalized,
@@ -68,6 +69,7 @@ class InMemoryRechargeOrders:
                 status=RechargeOrderStatus.PENDING,
                 created_at=submission.created_at,
                 updated_at=submission.created_at,
+                expires_at=submission.created_at + timedelta(minutes=1),
             )
             self._orders_by_id[order.order_id] = order
             self._orders_by_idempotency[idempotency] = order
@@ -95,6 +97,7 @@ class InMemoryRechargeOrders:
                 status=RechargeOrderStatus.PENDING,
                 created_at=submission.created_at,
                 updated_at=submission.created_at,
+                expires_at=submission.created_at + timedelta(minutes=1),
             )
             self._orders_by_id[order.order_id] = order
             self._orders_by_idempotency[idempotency] = order
@@ -106,13 +109,38 @@ class InMemoryRechargeOrders:
             order = self._orders_by_id.get(order_id)
         if order is None or order.account_space_id != account_space_id:
             raise RechargeOrderNotFound(order_id)
-        return order
+        with self._lock:
+            return self._expire_if_due(order, self._clock())
 
     def list(self, account_space_id: str) -> tuple[RechargeOrder, ...]:
         """按最新创建优先读取账户空间拥有的充值订单。"""
         with self._lock:
             owned = tuple(order for order in self._orders_by_id.values() if order.account_space_id == account_space_id)
+        with self._lock:
+            now = self._clock()
+            owned = tuple(self._expire_if_due(order, now) for order in owned)
         return tuple(sorted(owned, key=lambda order: (order.created_at, order.order_id), reverse=True))
+
+    def cancel(self, account_space_id: str, order_id: str, *, occurred_at: datetime) -> RechargeOrder:
+        """取消当前账户空间仍在有效期内的待支付订单。"""
+        with self._lock:
+            order = self._orders_by_id.get(order_id)
+            if order is None or order.account_space_id != account_space_id:
+                raise RechargeOrderNotFound(order_id)
+            order = self._expire_if_due(order, occurred_at)
+            if order.status is RechargeOrderStatus.CANCELLED:
+                return order
+            if order.status is not RechargeOrderStatus.PENDING:
+                raise RechargeOrderCancellationNotAllowed(order_id)
+            cancelled = replace(
+                order,
+                status=RechargeOrderStatus.CANCELLED,
+                updated_at=occurred_at,
+                cancelled_at=occurred_at,
+                cancellation_reason="user_cancelled",
+            )
+            self._store(cancelled)
+            return cancelled
 
     def record_payment_success(self, event: PaymentSuccess) -> RechargeOrder:
         """验证成功通知并为订单入账一次充值额度。"""
@@ -200,6 +228,23 @@ class InMemoryRechargeOrders:
             self._orders_by_idempotency[(order.account_space_id, order.idempotency_key)] = charged_back
             self._orders_by_chargeback_event[event_key] = (event, charged_back)
             return charged_back
+
+    def _expire_if_due(self, order: RechargeOrder, occurred_at: datetime) -> RechargeOrder:
+        if order.status is not RechargeOrderStatus.PENDING or not order.expires_at or occurred_at < order.expires_at:
+            return order
+        expired = replace(
+            order,
+            status=RechargeOrderStatus.EXPIRED,
+            updated_at=occurred_at,
+            cancelled_at=occurred_at,
+            cancellation_reason="expired",
+        )
+        self._store(expired)
+        return expired
+
+    def _store(self, order: RechargeOrder) -> None:
+        self._orders_by_id[order.order_id] = order
+        self._orders_by_idempotency[(order.account_space_id, order.idempotency_key)] = order
 
 
 def _matches_submission(order: RechargeOrder, submission: RechargeOrderSubmission) -> bool:

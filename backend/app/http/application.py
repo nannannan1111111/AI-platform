@@ -151,6 +151,7 @@ from app.orders import (
     PaymentProviderMismatch,
     PaymentSuccess,
     RechargeOrderAlreadyExists,
+    RechargeOrderCancellationNotAllowed,
     RechargeOrderChargebackNotAllowed,
     RechargeOrderChargebacks,
     RechargeOrderNotFound,
@@ -2469,6 +2470,27 @@ def create_app(
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录已失效") from exc
             except RechargeOrderNotFound as exc:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="充值订单不存在") from exc
+            return asdict(order)
+
+        @app.post("/api/v1/recharge-orders/{order_id}/cancel")
+        def cancel_recharge_order(
+            order_id: str,
+            authorization: Annotated[str | None, Header()] = None,
+        ) -> dict[str, object]:
+            token = _bearer_token(authorization)
+            try:
+                current = accounts.current_user(token)
+                order = recharge_orders.cancel(
+                    current.account_space_id,
+                    order_id,
+                    occurred_at=(clock or (lambda: datetime.now(UTC)))(),
+                )
+            except InvalidSession as exc:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录已失效") from exc
+            except RechargeOrderNotFound as exc:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="充值订单不存在") from exc
+            except RechargeOrderCancellationNotAllowed as exc:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="订单当前状态不能取消") from exc
             return asdict(order)
 
     if recharge_orders is not None and epay_payments is not None:
