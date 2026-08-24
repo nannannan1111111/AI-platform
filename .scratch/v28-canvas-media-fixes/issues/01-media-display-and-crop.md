@@ -1,5 +1,5 @@
 Type: task
-Status: claimed
+Status: resolved
 
 # 画布媒体显示与裁剪分叉
 
@@ -14,3 +14,4 @@ Status: claimed
 ## Comments
 
 - 2026-08-25：基于 V28 生产候选分支开始最小范围修复。
+- 2026-08-25：已完成缩略图字段保留、裁剪新节点分叉、资源版本更新；定向 Web UI 测试通过并部署到生产。
