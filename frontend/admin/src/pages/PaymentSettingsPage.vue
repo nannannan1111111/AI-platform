@@ -59,7 +59,7 @@ async function saveRate(): Promise<void> {
   try {
     Object.assign(rechargeRate, await props.bridge.api("/api/v1/admin/recharge-rate", {
       method: "PUT",
-      body: JSON.stringify({ credits_per_cny: rechargeRate.credits_per_cny }),
+      body: JSON.stringify({ credits_per_cny: String(rechargeRate.credits_per_cny) }),
     }));
     props.bridge.toast("普通充值比例已保存");
   } catch (caught) {

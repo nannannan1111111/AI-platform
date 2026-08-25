@@ -22,7 +22,7 @@ from urllib.parse import parse_qsl, unquote
 from fastapi import BackgroundTasks, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from PIL import Image, ImageOps, UnidentifiedImageError
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BeforeValidator, BaseModel, ConfigDict, Field, model_validator
 
 from app.account_generation_limits import AccountGenerationLimits
 from app.accounts import (
@@ -242,6 +242,18 @@ _WORKFLOW_MEDIA_URL_KEYS = {
 }
 
 
+def _coerce_decimal_input(value: object) -> str:
+    """Normalize browser number inputs at the API boundary."""
+    if isinstance(value, bool):
+        raise TypeError("decimal input must not be boolean")
+    if isinstance(value, (str, int, float, Decimal)):
+        return str(value)
+    raise TypeError("decimal input must be a string or number")
+
+
+DecimalInput = Annotated[str, BeforeValidator(_coerce_decimal_input)]
+
+
 class _Credentials(BaseModel):
     """邮箱密码请求。"""
 
@@ -390,13 +402,13 @@ class _CanvasLLMBody(BaseModel):
 
 class _RechargePackagePublication(BaseModel):
     package_code: str
-    payment_cny: str
-    credits: str
+    payment_cny: DecimalInput
+    credits: DecimalInput
     effective_from: datetime
 
 class _RedeemCodeCreate(BaseModel):
     count: int = Field(default=1, ge=1, le=1000)
-    credits: str = Field(min_length=1, max_length=32)
+    credits: DecimalInput = Field(min_length=1, max_length=32)
     expires_at: datetime | None = None
 
 class _RedeemCodeBody(BaseModel):
@@ -406,7 +418,7 @@ class _RedeemCodeBody(BaseModel):
 class _ModelPricePublication(BaseModel):
     logical_model: str
     output_spec: str
-    credits_per_result: str
+    credits_per_result: DecimalInput
     effective_from: datetime
     max_reference_images: int = Field(default=3, ge=0, le=16)
 
@@ -421,7 +433,7 @@ class _ProviderCostRatePublication(BaseModel):
 
 class _ProviderCostRateReplacement(BaseModel):
     provider_currency: str
-    cost_per_image_yuan: str
+    cost_per_image_yuan: DecimalInput
 
 
 def _yuan_to_cents(value: str) -> int:
@@ -461,7 +473,7 @@ class _RunningHubInputSchemaPublication(BaseModel):
 
 
 class _RunningHubUserPricePublication(BaseModel):
-    credits_per_run: str
+    credits_per_run: DecimalInput
     effective_from: datetime
 
 
@@ -545,12 +557,12 @@ class _RechargeOrderCreation(BaseModel):
 
 
 class _DirectRechargeOrderCreation(BaseModel):
-    payment_cny: str
+    payment_cny: DecimalInput
     payment_provider: str
 
 
 class _RechargeRateUpdate(BaseModel):
-    credits_per_cny: str
+    credits_per_cny: DecimalInput
 
 
 class _PaymentMethodSettings(BaseModel):
@@ -568,21 +580,21 @@ class _PaymentGatewaySettingsUpdate(BaseModel):
 
 
 class _AdminCreditGrant(BaseModel):
-    credits: str
+    credits: DecimalInput
     reason: str
 
 
 class _PaymentSuccessNotification(BaseModel):
     order_id: str
     provider_event_id: str
-    paid_payment_cny: str
+    paid_payment_cny: DecimalInput
     occurred_at: datetime
 
 
 class _PaymentChargebackNotification(BaseModel):
     order_id: str
     provider_event_id: str
-    charged_back_payment_cny: str
+    charged_back_payment_cny: DecimalInput
     occurred_at: datetime
 
 

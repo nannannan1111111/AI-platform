@@ -155,7 +155,7 @@ async function publishPrice(): Promise<void> {
   const selected = new Date(priceForm.effective_from);
   if (Number.isNaN(selected.getTime())) return props.bridge.toast("请选择有效的生效时间");
   const effective = selected.getTime() <= Date.now() ? new Date(Date.now() + 5_000) : selected;
-  await action(() => props.bridge.api("/api/v1/admin/model-prices", { method: "POST", body: JSON.stringify({ logical_model: spec.logical_model, output_spec: spec.output_spec, credits_per_result: priceForm.credits_per_result, effective_from: effective.toISOString() }) }), "模型价格版本已发布");
+  await action(() => props.bridge.api("/api/v1/admin/model-prices", { method: "POST", body: JSON.stringify({ logical_model: spec.logical_model, output_spec: spec.output_spec, credits_per_result: String(priceForm.credits_per_result), effective_from: effective.toISOString() }) }), "模型价格版本已发布");
 }
 
 async function deletePrice(price: JsonRecord): Promise<void> {

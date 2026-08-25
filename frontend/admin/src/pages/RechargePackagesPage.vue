@@ -34,7 +34,7 @@ async function publish(): Promise<void> {
   try {
     await props.bridge.api("/api/v1/admin/recharge-packages", {
       method: "POST",
-      body: JSON.stringify({ ...form, effective_from: new Date(form.effective_from).toISOString() }),
+      body: JSON.stringify({ ...form, payment_cny: String(form.payment_cny), credits: String(form.credits), effective_from: new Date(form.effective_from).toISOString() }),
     });
     props.bridge.toast("充值包版本已发布");
     form.payment_cny = "";

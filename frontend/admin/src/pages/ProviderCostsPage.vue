@@ -46,7 +46,7 @@ async function save(): Promise<void> {
   try {
     await props.bridge.api(`/api/v1/admin/provider-cost-rates/${encodeURIComponent(selectedRouteId.value)}`, {
       method: "PUT",
-      body: JSON.stringify(form),
+      body: JSON.stringify({ provider_currency: String(form.provider_currency), cost_per_image_yuan: String(form.cost_per_image_yuan) }),
     });
     props.bridge.toast("Provider 当前成本已更新");
     form.cost_per_image_yuan = "";

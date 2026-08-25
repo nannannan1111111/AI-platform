@@ -122,7 +122,7 @@ async function publishPrice(capabilityId: string): Promise<void> {
   try {
     await props.bridge.api(`/api/v1/admin/runninghub-capabilities/${encodeURIComponent(capabilityId)}/price-versions`, {
       method: "POST",
-      body: JSON.stringify({ credits_per_run: draft.credits_per_run, effective_from: new Date(draft.effective_from).toISOString() }),
+      body: JSON.stringify({ credits_per_run: String(draft.credits_per_run), effective_from: new Date(draft.effective_from).toISOString() }),
     });
     props.bridge.toast("RunningHub 用户价格新版本已发布");
     await load();
