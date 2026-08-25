@@ -451,6 +451,8 @@ th { background: var(--surface-soft); color: var(--muted); font-size: 11px; }
 .status.paid, .status.recharge, .status.release { background: var(--brand-soft); color: var(--brand-dark); }
 .status.charged_back, .status.reversal { background: #ffedef; color: var(--danger); }
 .status.freeze, .status.settlement { background: #eef2ff; color: #4657a6; }
+.keyword-hit { background: #fff1f2; color: #b42318; }
+.keyword-list { display: flex; flex-wrap: wrap; gap: 8px; }
 .status.healthy { background: var(--brand-soft); color: var(--brand-dark); }
 .status.degraded, .status.unknown { background: #fff4d8; color: var(--warning); }
 .status.unhealthy { background: #ffedef; color: var(--danger); }

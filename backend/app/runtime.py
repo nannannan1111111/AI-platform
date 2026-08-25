@@ -59,6 +59,8 @@ from app.prompt_assets import SqlAlchemyPromptAssets
 from app.provider_costs import SqlAlchemyProviderCostRates, SqlAlchemyProviderCostSummaries
 from app.provider_images import OpenAICompatibleImageSubmissions
 from app.reference_media import SqlAlchemyReferenceMedia
+from app.prompt_safety import SqlAlchemyPromptSafety
+from app.risk_events import SqlAlchemyRiskEvents
 from app.runninghub_capabilities import SqlAlchemyRunningHubCapabilities
 from app.user_llm import SqlAlchemyUserLLMProviders
 from app.worker_capacity import SqlAlchemyWorkerCapacitySettings
@@ -404,6 +406,8 @@ def _compose_application(
 ) -> FastAPI:
     email_settings = SqlAlchemyEmailSettings(sessions, provider_secrets)
     platform_content = SqlAlchemyPlatformContentSettings(sessions, media_objects)
+    prompt_safety = SqlAlchemyPromptSafety(sessions)
+    risk_events = SqlAlchemyRiskEvents(sessions)
     accounts = SqlAlchemyAccountAccess(sessions, verification_delivery=email_settings)
     model_prices = SqlAlchemyModelPrices(sessions)
     credits = SqlAlchemyCredits(sessions, model_prices=model_prices)
@@ -419,6 +423,7 @@ def _compose_application(
         canvases=canvases,
         max_active_tasks=settings.max_active_generation_tasks,
         deadline=lambda: timedelta(minutes=worker_capacity.current().task_deadline_minutes),
+        risk_events=risk_events,
     )
     storage_allowances = SqlAlchemyStorageAllowances(sessions)
     account_generation_limits = SqlAlchemyAccountGenerationLimits(sessions)
@@ -494,6 +499,8 @@ def _compose_application(
         worker_capacity=worker_capacity,
         email_settings=email_settings,
         platform_content=platform_content,
+        prompt_safety=prompt_safety,
+        risk_events=risk_events,
         admin_authorizer=account_admin_authorizer(accounts, settings.platform_admin_emails),
         auth_abuse_protection=auth_abuse_protection,
         auth_abuse_policies=settings.auth_abuse_policies,

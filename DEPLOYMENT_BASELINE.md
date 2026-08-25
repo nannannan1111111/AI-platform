@@ -26,6 +26,14 @@ V27 于 2026-08-24 部署完成：Web 与 10 个 Generation Worker 使用同一�
 - 验证：后端 `641 passed, 5 skipped`，Web UI `97 passed`，生成链定向 `141 passed`，连接池/Worker/交付定向 `72 passed`，前端生产构建及语法/差异检查通过。
 - 部署状态：未构建或切换生产容器，生产仍为上述 V27 镜像与摘要，V26 回滚镜像继续保留。
 
+## V31 候选（待部署）
+
+- 基线：V30 `d87f23e`（标签 `v1.0.10`），分支 `codex/v31-prompt-safety-risk-monitoring`。
+- 功能：管理员违规关键词配置/TXT 导入与生图前拦截；脱敏运行风险事件及连续 10 次失败告警；管理员任务历史时间窗口分页监管。
+- 数据库迁移：`0066_prompt_safety_risk_events`，向后兼容，不删除历史任务、媒体或额度流水。
+- 建议镜像：`creative-studio:single-host-candidate-v31`；部署前将当前 V30 保存为 `creative-studio:single-host-rollback-v31`。
+- 验证：V31 定向后端、新增功能测试和前端构建通过；完整后端 `645 passed, 5 skipped`，另有 1 个 V30 既有 `admin-vue-8` 静态缓存断言失败。
+
 后续部署必须遵循：
 
 1. 先在服务器核实当前 Web 与 Worker 的镜像标签/摘要，并从该生产镜像创建下一候选。

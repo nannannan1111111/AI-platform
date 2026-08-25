@@ -178,6 +178,7 @@ from app.prompt_assets import (
     PromptItemSave,
     PromptLibraryCreate,
 )
+from app.prompt_safety import PromptSafety, normalize_keywords
 from app.provider_costs import (
     InvalidProviderCostRate,
     ProviderCostRate,
@@ -196,6 +197,7 @@ from app.reference_media import (
     ReferenceMediaRecord,
     ReferenceMediaUpload,
 )
+from app.risk_events import RiskEvents
 from app.runninghub_capabilities import (
     InvalidRunningHubCapability,
     RunningHubCapabilities,
@@ -287,6 +289,12 @@ class _PasswordReset(BaseModel):
     model_config = ConfigDict(extra="forbid")
     token: str = Field(min_length=20, max_length=512)
     new_password: str
+
+
+class _PromptSafetyUpdate(BaseModel):
+    enabled: bool = True
+    prompt_check_enabled: bool = True
+    keywords: list[str] = Field(default_factory=list)
 
 
 class _GenerationParameters(BaseModel):
@@ -910,6 +918,8 @@ def create_app(
     worker_capacity: WorkerCapacitySettings | None = None,
     email_settings: EmailSettings | None = None,
     platform_content: PlatformContentSettings | None = None,
+    prompt_safety: PromptSafety | None = None,
+    risk_events: RiskEvents | None = None,
     admin_authorizer: Callable[[str], None] | None = None,
     payment_notification_verifier: Callable[[str, str], None] | None = None,
     chargeback_notification_verifier: Callable[[str, str], None] | None = None,
@@ -1386,7 +1396,38 @@ def create_app(
                     "account_space_id": task.account_space_id,
                     "user_email": emails_by_user_id.get(task.user_id, ""),
                     "started_at": task.started_at,
+                    "keyword_triggered": False,
                 }
+
+            if prompt_safety is not None:
+
+                @app.get("/api/v1/admin/prompt-safety")
+                def get_prompt_safety(authorization: Annotated[str | None, Header()] = None) -> dict[str, object]:
+                    _require_platform_admin(authorization, admin_authorizer)
+                    settings = prompt_safety.current()
+                    return {"enabled": settings.enabled, "prompt_check_enabled": settings.prompt_check_enabled, "keywords": list(settings.keywords), "format": "UTF-8 纯文本，每行一个关键词；空行忽略，最多 10000 条"}
+
+                @app.put("/api/v1/admin/prompt-safety")
+                def update_prompt_safety(payload: _PromptSafetyUpdate, authorization: Annotated[str | None, Header()] = None) -> dict[str, object]:
+                    _require_platform_admin(authorization, admin_authorizer)
+                    settings = prompt_safety.update(enabled=payload.enabled, prompt_check_enabled=payload.prompt_check_enabled, keywords=payload.keywords)
+                    return {"enabled": settings.enabled, "prompt_check_enabled": settings.prompt_check_enabled, "keywords": list(settings.keywords), "format": "UTF-8 纯文本，每行一个关键词；空行忽略，最多 10000 条"}
+
+                @app.post("/api/v1/admin/prompt-safety/upload")
+                async def upload_prompt_safety(file: Annotated[UploadFile, File()], authorization: Annotated[str | None, Header()] = None) -> dict[str, object]:
+                    _require_platform_admin(authorization, admin_authorizer)
+                    if not (file.filename or "").lower().endswith(".txt"):
+                        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="仅支持 .txt 文件")
+                    content = await file.read(2 * 1024 * 1024 + 1)
+                    if len(content) > 2 * 1024 * 1024:
+                        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="关键词文件不能超过 2MB")
+                    try:
+                        text = content.decode("utf-8-sig")
+                    except UnicodeDecodeError as exc:
+                        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="关键词文件必须使用 UTF-8 编码") from exc
+                    current = prompt_safety.current()
+                    settings = prompt_safety.update(enabled=current.enabled, prompt_check_enabled=current.prompt_check_enabled, keywords=list(normalize_keywords(text)))
+                    return {"enabled": settings.enabled, "prompt_check_enabled": settings.prompt_check_enabled, "keywords": list(settings.keywords), "format": "UTF-8 纯文本，每行一个关键词；空行忽略，最多 10000 条"}
 
             @app.get("/api/v1/admin/generation-tasks/active")
             def active_admin_generation_tasks(
@@ -1401,6 +1442,44 @@ def create_app(
                     except KeyError:
                         pass
                 return [admin_generation_task_projection(task, emails_by_user_id) for task in active_tasks]
+
+            @app.get("/api/v1/admin/generation-tasks/history")
+            def admin_generation_task_history(
+                window: Annotated[str, Query(pattern="^(24h|7d|30d|all)$")] = "24h",
+                page: Annotated[int, Query(ge=1, le=100000)] = 1,
+                page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+                authorization: Annotated[str | None, Header()] = None,
+            ) -> dict[str, object]:
+                _require_platform_admin(authorization, admin_authorizer)
+                now = (clock or (lambda: datetime.now(UTC)))()
+                since = None if window == "all" else now - {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30)}[window]
+                offset = (page - 1) * page_size
+                tasks = generation_tasks.admin_recent(since=since, offset=offset, limit=page_size)
+                emails_by_user_id: dict[str, str] = {}
+                for user_id in {task.user_id for task in tasks}:
+                    try:
+                        emails_by_user_id[user_id] = account_directory.registered_user(user_id).email
+                    except KeyError:
+                        pass
+                total_entries = generation_tasks.admin_total(since=since)
+                return {"entries": [admin_generation_task_projection(task, emails_by_user_id) for task in tasks], "page": page, "page_size": page_size, "total_entries": total_entries, "total_pages": max(1, (total_entries + page_size - 1) // page_size), "window": window}
+
+            if risk_events is not None:
+
+                @app.get("/api/v1/admin/risk-events")
+                def admin_risk_events(
+                    window: Annotated[str, Query(pattern="^(24h|7d|30d|all)$")] = "24h",
+                    page: Annotated[int, Query(ge=1, le=100000)] = 1,
+                    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+                    authorization: Annotated[str | None, Header()] = None,
+                ) -> dict[str, object]:
+                    _require_platform_admin(authorization, admin_authorizer)
+                    now = (clock or (lambda: datetime.now(UTC)))()
+                    since = None if window == "all" else now - {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30)}[window]
+                    offset = (page - 1) * page_size
+                    events = risk_events.list(since=since, offset=offset, limit=page_size)
+                    total_entries = risk_events.total(since=since)
+                    return {"entries": [asdict(event) for event in events], "page": page, "page_size": page_size, "total_entries": total_entries, "total_pages": max(1, (total_entries + page_size - 1) // page_size), "window": window}
 
             @app.post("/api/v1/admin/generation-tasks/{task_id}/cancel")
             def cancel_admin_generation_task(
@@ -3475,6 +3554,12 @@ def create_app(
                     *request.reference_media_ids,
                     *([request.mask_media_id] if request.mask_media_id else []),
                 ]
+                if prompt_safety is not None:
+                    matches = prompt_safety.matches(request.prompt)
+                    if matches:
+                        if risk_events is not None:
+                            risk_events.record("prompt_keyword_blocked", "生图请求命中违规关键词", severity="warning", count=len(matches))
+                        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="提示词包含违规关键词，无法生成图片")
                 if model_prices is not None:
                     selected_model = model_prices.effective_at(request.logical_model, request.output_spec, submitted_at)
                     reference_image_limit = _model_reference_image_limit(

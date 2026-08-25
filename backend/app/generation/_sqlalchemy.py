@@ -52,6 +52,7 @@ from app.generation.models import (
     GenerationTaskStatus,
     GenerationTransition,
 )
+from app.risk_events import RiskEvents
 
 _metadata = MetaData()
 _generation_tasks = Table(
@@ -108,6 +109,7 @@ class SqlAlchemyGenerationTasks:
         canvases: Canvases,
         max_active_tasks: int,
         deadline: Callable[[], timedelta] = lambda: GENERATION_TASK_DEADLINE,
+        risk_events: RiskEvents | None = None,
     ) -> None:
         if max_active_tasks <= 0:
             raise ValueError("max_active_tasks must be positive")
@@ -116,6 +118,7 @@ class SqlAlchemyGenerationTasks:
         self._canvases = canvases
         self._max_active_tasks = max_active_tasks
         self._deadline = deadline
+        self._risk_events = risk_events
 
     @classmethod
     def for_database_url(
@@ -126,6 +129,7 @@ class SqlAlchemyGenerationTasks:
         canvases: Canvases,
         max_active_tasks: int,
         deadline: Callable[[], timedelta] = lambda: GENERATION_TASK_DEADLINE,
+        risk_events: RiskEvents | None = None,
     ) -> SqlAlchemyGenerationTasks:
         engine = create_engine(database_url)
         return cls(
@@ -134,6 +138,7 @@ class SqlAlchemyGenerationTasks:
             canvases=canvases,
             max_active_tasks=max_active_tasks,
             deadline=deadline,
+            risk_events=risk_events,
         )
 
     def submit(self, submission: GenerationSubmission) -> GenerationTask:
@@ -228,6 +233,20 @@ class SqlAlchemyGenerationTasks:
                 )
             ).mappings()
             return tuple(_task_from_row(row) for row in rows)
+
+    def admin_recent(self, *, since: datetime | None, offset: int, limit: int) -> tuple[GenerationTask, ...]:
+        query = select(_generation_tasks).where(_generation_tasks.c.history_hidden_at.is_(None)).order_by(_generation_tasks.c.created_at.desc(), _generation_tasks.c.id.desc()).offset(offset).limit(limit)
+        if since is not None:
+            query = query.where(_generation_tasks.c.created_at >= since)
+        with self._session_factory() as database:
+            return tuple(_task_from_row(row) for row in database.execute(query).mappings())
+
+    def admin_total(self, *, since: datetime | None) -> int:
+        query = select(func.count()).select_from(_generation_tasks).where(_generation_tasks.c.history_hidden_at.is_(None))
+        if since is not None:
+            query = query.where(_generation_tasks.c.created_at >= since)
+        with self._session_factory() as database:
+            return int(database.scalar(query) or 0)
 
     def expire_due(self, now: datetime) -> tuple[GenerationTask, ...]:
         """按当前管理员截止时间幂等失败活动任务并释放冻结额度。"""
@@ -475,6 +494,10 @@ class SqlAlchemyGenerationTasks:
                 .where(_generation_tasks.c.id == task_id)
                 .values(**_task_values(updated, frozen_units=updated.frozen_credits))
             )
+            if self._risk_events is not None and isinstance(event, GenerationFailed):
+                self._risk_events.record_generation_outcome(False)
+            elif self._risk_events is not None and isinstance(event, GenerationSucceeded):
+                self._risk_events.record_generation_outcome(True)
             return updated
 
 

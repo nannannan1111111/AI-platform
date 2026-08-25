@@ -123,6 +123,16 @@ class InMemoryGenerationTasks:
             active = (task for task in self._tasks_by_key.values() if not task.status.is_terminal)
             return tuple(sorted(active, key=lambda task: (task.created_at, task.account_space_id, task.task_id)))
 
+    def admin_recent(self, *, since: datetime | None, offset: int, limit: int) -> tuple[GenerationTask, ...]:
+        with self._lock:
+            values = [task for task in self._tasks_by_key.values() if since is None or task.created_at >= since]
+            values.sort(key=lambda task: (task.created_at, task.task_id), reverse=True)
+            return tuple(values[offset : offset + limit])
+
+    def admin_total(self, *, since: datetime | None) -> int:
+        with self._lock:
+            return sum(1 for task in self._tasks_by_key.values() if since is None or task.created_at >= since)
+
     def expire_due(self, now: datetime) -> tuple[GenerationTask, ...]:
         """按当前管理员截止时间将活动任务失败并退款。"""
         deadline = self._deadline()

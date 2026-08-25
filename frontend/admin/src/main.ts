@@ -6,6 +6,8 @@ import GenerationCapacityPage from "./pages/GenerationCapacityPage.vue";
 import GenerationsPage from "./pages/GenerationsPage.vue";
 import GenerationTasksPage from "./pages/GenerationTasksPage.vue";
 import PlatformContentPage from "./pages/PlatformContentPage.vue";
+import PromptSafetyPage from "./pages/PromptSafetyPage.vue";
+import RiskEventsPage from "./pages/RiskEventsPage.vue";
 import EmailSettingsPage from "./pages/EmailSettingsPage.vue";
 import ModelRoutingPage from "./pages/ModelRoutingPage.vue";
 import PaymentSettingsPage from "./pages/PaymentSettingsPage.vue";
@@ -27,6 +29,8 @@ const pages = {
   "/admin/generation-capacity": GenerationCapacityPage,
   "/admin/email-settings": EmailSettingsPage,
   "/admin/platform-content": PlatformContentPage,
+  "/admin/prompt-safety": PromptSafetyPage,
+  "/admin/risk-events": RiskEventsPage,
   "/admin/model-routing": ModelRoutingPage,
   "/admin/provider-costs": ProviderCostsPage,
   "/admin/recharge-packages": RechargePackagesPage,

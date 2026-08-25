@@ -29,6 +29,12 @@ class GenerationTasks(Protocol):
     def active_across_accounts(self) -> tuple[GenerationTask, ...]:
         """按创建顺序读取全站仍在排队或运行的任务，供平台管理使用。"""
 
+    def admin_recent(self, *, since: datetime | None, offset: int, limit: int) -> tuple[GenerationTask, ...]:
+        """按创建时间倒序读取管理员任务监管列表。"""
+
+    def admin_total(self, *, since: datetime | None) -> int:
+        """返回管理员任务监管列表总数。"""
+
     def active_for_canvas(self, account_space_id: str, canvas_id: str) -> tuple[GenerationTask, ...]:
         """按创建顺序读取指定画布的活动任务。"""
 

@@ -296,6 +296,8 @@ function shell(title, content, pageClass = '') {
     '充值包': '/admin/recharge-packages',
     '兑换码': '/admin/redeem-codes',
     '任务管理': '/admin/generation-tasks',
+    '违规关键词': '/admin/prompt-safety',
+    '风险日志': '/admin/risk-events',
     '用户管理': '/admin/users',
     '存储额度': '/admin/storage-allowance',
     '生成容量': '/admin/generation-capacity',
@@ -338,6 +340,8 @@ function shell(title, content, pageClass = '') {
         ${state.isAdmin ? navigationItem('支付设置', '/admin/payment-settings', '付') : ''}
         ${state.isAdmin ? navigationItem('用户管理', '/admin/users', '户') : ''}
         ${state.isAdmin ? navigationItem('任务管理', '/admin/generation-tasks', '任') : ''}
+        ${state.isAdmin ? navigationItem('违规关键词', '/admin/prompt-safety', '禁') : ''}
+        ${state.isAdmin ? navigationItem('风险日志', '/admin/risk-events', '险') : ''}
         ${state.isAdmin ? navigationItem('存储额度', '/admin/storage-allowance', '存') : ''}
         ${state.isAdmin ? navigationItem('生成容量', '/admin/generation-capacity', '并') : ''}
         ${state.isAdmin ? navigationItem('公告与客服', '/admin/platform-content', '告') : ''}
@@ -3850,6 +3854,8 @@ async function runAdminAction(button, action, successMessage, refreshPage = admi
 const vueAdminRoutes = new Set([
   '/admin/users',
   '/admin/generation-tasks',
+  '/admin/prompt-safety',
+  '/admin/risk-events',
   '/admin/storage-allowance',
   '/admin/generation-capacity',
   '/admin/email-settings',
@@ -3865,6 +3871,8 @@ const vueAdminRoutes = new Set([
 const vueAdminTitles = {
   '/admin/users': '用户管理',
   '/admin/generation-tasks': '任务管理',
+  '/admin/prompt-safety': '违规关键词',
+  '/admin/risk-events': '风险日志',
   '/admin/storage-allowance': '存储额度',
   '/admin/generation-capacity': '生成容量',
   '/admin/email-settings': '邮件设置',

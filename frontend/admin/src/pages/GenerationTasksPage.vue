@@ -8,6 +8,9 @@ const props = defineProps<{ bridge: AdminBridge }>();
 const loading = ref(true);
 const error = ref("");
 const tasks = ref<JsonRecord[]>([]);
+const windowKey = ref("24h");
+const history = ref<JsonRecord>({ entries: [], page: 1, total_pages: 1, total_entries: 0 });
+const view = ref<"active" | "history">("active");
 const cancellingTaskId = ref("");
 const queuedCount = computed(() => tasks.value.filter((task) => task.status === "queued").length);
 const runningCount = computed(() => tasks.value.filter((task) => task.status === "running").length);
@@ -17,7 +20,8 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = "";
   try {
-    tasks.value = await props.bridge.api("/api/v1/admin/generation-tasks/active");
+    if (view.value === "active") tasks.value = await props.bridge.api("/api/v1/admin/generation-tasks/active");
+    else history.value = await props.bridge.api(`/api/v1/admin/generation-tasks/history?window=${windowKey.value}&page=1&page_size=50`);
   } catch (caught) {
     error.value = errorMessage(caught);
   } finally {
@@ -54,7 +58,9 @@ onMounted(load);
   <div v-if="loading" class="loading">正在读取活动任务…</div>
   <div v-else-if="error" class="empty">{{ error }}</div>
   <template v-else>
-    <div class="page-head"><div><h1>当前生成任务</h1><p>查看全站排队中和生成中的任务。取消后会释放全部冻结额度；迟到结果不会交付。</p></div><button class="secondary-btn" type="button" @click="load">刷新</button></div>
+    <div class="page-head"><div><h1>任务监管</h1><p>查看活动任务和最近生成任务，命中违规关键词的任务会标红。</p></div><button class="secondary-btn" type="button" @click="load">刷新</button></div>
+    <div class="segmented-control"><button :class="{active:view==='active'}" @click="view='active';load()">活动任务</button><button :class="{active:view==='history'}" @click="view='history';load()">历史任务</button><template v-if="view==='history'"><button v-for="item in [{v:'24h',l:'24小时'},{v:'7d',l:'7天'},{v:'30d',l:'30天'},{v:'all',l:'全部'}]" :key="item.v" :class="{active:windowKey===item.v}" @click="windowKey=item.v;load()">{{ item.l }}</button></template></div>
+    <template v-if="view==='active'">
     <section class="grid three"><article class="stat-card"><span>活动任务</span><strong>{{ tasks.length }}</strong><small>排队中与生成中的任务总数</small></article><article class="stat-card"><span>排队中</span><strong>{{ queuedCount }}</strong><small>尚未开始 Provider 调用</small></article><article class="stat-card"><span>生成中</span><strong>{{ runningCount }}</strong><small>已经开始执行的任务</small></article></section>
     <section class="panel admin-panel">
       <div class="section-head" style="margin-top:0"><div><h2>任务明细</h2><p>列表按任务提交时间从早到晚排列。</p></div></div>
@@ -71,5 +77,7 @@ onMounted(load);
         </tr>
       </tbody></table></div>
     </section>
+    </template>
+    <section v-else class="panel admin-panel"><div class="section-head" style="margin-top:0"><div><h2>最近生成任务</h2><p>共 {{ history.total_entries || 0 }} 条，服务端分页查询。</p></div></div><div v-if="!history.entries?.length" class="empty">当前筛选窗口没有任务。</div><div v-else class="table-wrap"><table><thead><tr><th>用户</th><th>模型来源</th><th>生成时间</th><th>状态</th><th>关键词</th></tr></thead><tbody><tr v-for="task in history.entries" :key="task.task_id" :class="{'keyword-hit':task.keyword_triggered}"><td>{{ task.user_email || "未知用户" }}</td><td>{{ task.logical_model }} / {{ task.output_spec }}</td><td>{{ formatDate(task.created_at) }}</td><td><span class="status" :class="task.status">{{ statusLabels[task.status] || task.status }}</span></td><td>{{ task.keyword_triggered ? "已触发" : "未触发" }}</td></tr></tbody></table></div></section>
   </template>
 </template>
