@@ -2,19 +2,19 @@
 
 生产源码基线不是当前 `main` 工作区。当前 `main` 保留了历史未提交改动，不能直接用于构建镜像或覆盖生产文件。
 
-截至 2026-08-24，当前生产基线为：
+截至 2026-08-26，当前生产基线为：
 
-- 运行镜像：`creative-studio:single-host-candidate-v27`
-- 运行镜像摘要：`sha256:40c29e85691bf0460cf55aaed727a48b544f807e0457c279d9bedcec1858c71e`
-- 回滚镜像：`creative-studio:single-host-rollback-v26`
-- 回滚镜像摘要：`sha256:22e90333d05683b378bf5b0766b26ad44bc4ae025df3bfb2f7afb92122c02427`
+- 运行镜像：`creative-studio:single-host-candidate-v31`
+- 运行镜像摘要：`sha256:d5a438bed458cc532c63f7b92cc3e6bf1e203bc1f312e08b379c8ab18d4fa253`
+- 回滚镜像：`creative-studio:single-host-rollback-v31`
+- 回滚镜像摘要：`sha256:046baa8e8595a574517fc52aacceb1871d3dae26e3685930275c377fc67cc70`
 - Compose：`/opt/infinite-canvas/compose.production.yml`
 - 环境文件：`/etc/infinite-canvas/single-host.env`
 - Generation Worker：10 个
 
 V28 及后续候选必须直接从当前生产镜像 V27（或服务器核实到的更新生产镜像）创建，先复制为不可变回滚标签，再叠加本次小范围补丁。不得重新从 V17、旧工作树或当前 `main` 的干净提交直接覆盖生产。
 
-V27 于 2026-08-24 部署完成：Web 与 10 个 Generation Worker 使用同一镜像；数据库迁移为 `0065_merge_v17_redeem_concurrency`；回环及公网 `/healthz`、`/readyz` 均通过。
+V31 于 2026-08-26 部署完成：Web 与 10 个 Generation Worker 使用同一镜像；数据库迁移为 `0066_prompt_safety_risk_events`；回环 `/healthz`、`/readyz` 均通过。
 
 ## V28 候选（未部署）
 
@@ -26,13 +26,13 @@ V27 于 2026-08-24 部署完成：Web 与 10 个 Generation Worker 使用同一�
 - 验证：后端 `641 passed, 5 skipped`，Web UI `97 passed`，生成链定向 `141 passed`，连接池/Worker/交付定向 `72 passed`，前端生产构建及语法/差异检查通过。
 - 部署状态：未构建或切换生产容器，生产仍为上述 V27 镜像与摘要，V26 回滚镜像继续保留。
 
-## V31 候选（待部署）
+## V31 已部署
 
 - 基线：V30 `d87f23e`（标签 `v1.0.10`），分支 `codex/v31-prompt-safety-risk-monitoring`。
 - 功能：管理员违规关键词配置/TXT 导入与生图前拦截；脱敏运行风险事件及连续 10 次失败告警；管理员任务历史时间窗口分页监管。
 - 数据库迁移：`0066_prompt_safety_risk_events`，向后兼容，不删除历史任务、媒体或额度流水。
-- 建议镜像：`creative-studio:single-host-candidate-v31`；部署前将当前 V30 保存为 `creative-studio:single-host-rollback-v31`。
-- 验证：V31 定向后端、新增功能测试和前端构建通过；完整后端 `645 passed, 5 skipped`，另有 1 个 V30 既有 `admin-vue-8` 静态缓存断言失败。
+- 镜像：`creative-studio:single-host-candidate-v31`，摘要 `sha256:d5a438bed458cc532c63f7b92cc3e6bf1e203bc1f312e08b379c8ab18d4fa253`；回滚镜像 `creative-studio:single-host-rollback-v31`，摘要 `sha256:046baa8e8595a574517fc52aacceb1871d3dae26e3685930275c377fc67cc70`。
+- 验证：V31 定向后端、新增功能测试和前端构建通过；迁移 head、Web/Worker 镜像一致性、`/healthz`、`/readyz` 均通过；完整后端 `645 passed, 5 skipped`，另有 1 个 V30 既有 `admin-vue-8` 静态缓存断言失败。
 
 后续部署必须遵循：
 

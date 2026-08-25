@@ -58,7 +58,7 @@
 - 真实浏览器验证覆盖创建/返回、工作流导入导出、上传、编辑工具、下载、缩放/适应视图、节点选择/拖动/Delete 删除及其他现有工具栏；console 无 error/warn。因本地无已发布模型和额度，未发起付费生图，生成链由自动化覆盖且未对生产写入。
 - 建议标签 `v1.0.8`，建议镜像 `creative-studio:single-host-candidate-v28`；当前生产继续运行 V27，本次未部署、未迁移数据库、未重启生产服务。
 
-## V1.0.11 / V31 候选
+## V1.0.11 / V31 已部署
 
 - 基于 V30 `d87f23e`（`v1.0.10`）继续开发，未从旧目录、旧 ZIP、V17、干净 `main` 或其他 worktree 覆盖。
 - 新增管理员违规关键词设置和 UTF-8 TXT 导入；每行一个关键词、空行忽略、去重。普通生图和画布生图共用提交前拦截，命中不冻结额度、不创建任务、不调用上游。
@@ -66,4 +66,7 @@
 - 新增管理员生成任务历史监管接口和页面，支持 24 小时、7 天、30 天、全部窗口及分页，关键词命中标红。
 - 新增迁移 `0066_prompt_safety_risk_events`；不删除历史任务、图片或账务流水。
 - 定向测试、新增 V31 测试、迁移契约、前端检查和构建通过。完整后端 `645 passed, 5 skipped`，另有一个 V30 既有静态缓存版本断言失败（测试要求 `admin-vue-8`，源码已为 `admin-vue-9`）。
-- 建议标签 `v1.0.11`，建议镜像 `creative-studio:single-host-candidate-v31`。
+- 源码提交：`b18ea98 feat: add prompt safety risk monitoring and task oversight`；建议标签 `v1.0.11`。
+- 生产镜像：`creative-studio:single-host-candidate-v31@sha256:d5a438bed458cc532c63f7b92cc3e6bf1e203bc1f312e08b379c8ab18d4fa253`。
+- 回滚镜像：`creative-studio:single-host-rollback-v31@sha256:046baa8e8595a574517fc52aacceb1871d3dae26e3685930275c377fc67cc70`。
+- 已执行迁移 `0066_prompt_safety_risk_events`；Web 与 10 个 Worker 使用同一 V31 摘要，健康/就绪检查通过。
