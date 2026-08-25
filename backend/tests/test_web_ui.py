@@ -3424,7 +3424,7 @@ def test_python_saas_web_shell_mounts_vue_admin_and_workspace_pages() -> None:
     assert page.status_code == 200
     assert bundle.status_code == 200
     assert 'type="module"' in page.text
-    assert "/web-assets/admin-vue/admin.js?v=admin-vue-7" in page.text
+    assert "/web-assets/admin-vue/admin.js?v=admin-vue-8" in page.text
     assert "admin-vue-root" in shell_script.text
     assert "vueAdminRoutes" in shell_script.text
     assert "按邮箱设置用户" in bundle.text
@@ -3438,6 +3438,8 @@ def test_python_saas_web_shell_mounts_vue_admin_and_workspace_pages() -> None:
     assert "特惠充值包" in bundle.text
     assert "易支付网关" in bundle.text
     assert "RunningHub 能力目录" in bundle.text
+    assert "导出 TXT" in bundle.text
+    assert "redeem-codes-${new Date().toISOString().slice(0,10)}.txt" in bundle.text
     assert "个人账户" in bundle.text
     assert "额度账务记录" in bundle.text
     assert "最近生成任务" in bundle.text
