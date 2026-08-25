@@ -1390,8 +1390,9 @@ def create_app(
                 task: GenerationTask,
                 emails_by_user_id: Mapping[str, str],
             ) -> dict[str, object]:
+                safe_task = {key: value for key, value in _public_generation_task(task).items() if key != "prompt"}
                 return {
-                    **_public_generation_task(task),
+                    **safe_task,
                     "user_id": task.user_id,
                     "account_space_id": task.account_space_id,
                     "user_email": emails_by_user_id.get(task.user_id, ""),

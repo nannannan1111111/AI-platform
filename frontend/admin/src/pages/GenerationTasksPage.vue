@@ -68,7 +68,7 @@ onMounted(load);
       <div v-else class="table-wrap admin-generation-task-table"><table><thead><tr><th>用户</th><th>任务</th><th>模型 / 规格</th><th>数量</th><th>冻结额度</th><th>状态</th><th>提交 / 开始时间</th><th>操作</th></tr></thead><tbody>
         <tr v-for="task in tasks" :key="task.task_id">
           <td><strong>{{ task.user_email || "未知用户" }}</strong><br><span class="mono">{{ task.user_id }}</span></td>
-          <td><span class="mono">{{ task.task_id }}</span><br><span class="muted">{{ String(task.prompt || "").slice(0, 60) || "—" }}</span></td>
+          <td><span class="mono">{{ task.task_id }}</span></td>
           <td><strong>{{ task.logical_model }}</strong><br><span class="muted">{{ task.output_spec }}</span></td>
           <td>{{ Number(task.quantity) }}</td><td>{{ formatCredits(task.frozen_credits) }}</td>
           <td><span class="status" :class="task.status">{{ statusLabels[task.status] || task.status }}</span></td>

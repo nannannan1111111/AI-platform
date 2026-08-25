@@ -2592,7 +2592,7 @@ def test_top_level_image_workspace_observes_a_restored_task_until_delivery() -> 
     harness = r"""
 const assert = require('node:assert/strict');
 const source = require('node:fs').readFileSync(0, 'utf8');
-const start = source.indexOf('async function completeImageSessionEntry');
+const start = source.indexOf('async function loadImageSessionMedia');
 const end = source.indexOf('function bindImageSessionActions', start);
 assert.ok(start >= 0, 'image task observation behavior is missing');
 const state = {
@@ -2605,17 +2605,21 @@ const entry = {
 state.imageSessionEntries.push(entry);
 let taskReads = 0;
 let renders = 0;
+let mediaReads = 0;
 const notices = [];
 const api = async path => {
   if (path === '/api/v1/generation-tasks/task-queued') {
     taskReads += 1;
     return taskReads === 1
       ? {task_id: 'task-queued', status: 'running'}
-      : {task_id: 'task-queued', status: 'succeeded', created_at: '2026-08-11T00:01:00Z'};
+      : {task_id: 'task-queued', status: 'succeeded', quantity: 1, delivered_quantity: 1, created_at: '2026-08-11T00:01:00Z'};
   }
-  if (path === '/api/v1/generation-tasks/task-queued/media') return [
-    {media_id: 'media-1', mime_type: 'image/png', state: 'temporary'},
-  ];
+  if (path === '/api/v1/generation-tasks/task-queued/media') {
+    mediaReads += 1;
+    return mediaReads === 1 ? [] : [
+      {media_id: 'media-1', mime_type: 'image/png', state: 'temporary'},
+    ];
+  }
   if (path === '/api/v1/auth/me') return {user_id: 'user-1'};
   throw new Error(`unexpected request: ${path}`);
 };
@@ -2627,6 +2631,7 @@ eval(source.slice(start, end));
 (async () => {
   await observeImageSessionTask(entry);
   assert.equal(taskReads, 2);
+  assert.equal(mediaReads, 2, 'image page must wait for committed media visibility');
   assert.equal(entry.status, 'succeeded');
   assert.equal(entry.media.length, 1);
   assert.equal(entry.media[0].sessionNumber, 4);
@@ -2731,7 +2736,7 @@ def test_image_workspace_falls_back_to_bounded_polling_when_sse_disconnects() ->
     harness = r"""
 const assert = require('node:assert/strict');
 const source = require('node:fs').readFileSync(0, 'utf8');
-const start = source.indexOf('async function completeImageSessionEntry');
+const start = source.indexOf('async function loadImageSessionMedia');
 const end = source.indexOf('function bindImageSessionActions', start);
 const entry = {taskId:'task-sse-drop', status:'pending', quantity:1, startNumber:1, media:[]};
 const state = {imageTaskObservers:new Set(), user:null};
@@ -2873,6 +2878,7 @@ const activeSmartTaskPolls = new Map();
 const tr = value => value;
 class ImageTaskRecoverSignal extends Error {}
 const delivered = [];
+let mediaReads = 0;
 const terminal = {task_id:'task-terminal-first', status:'succeeded', delivered_quantity:1};
 global.window = {SaaSCanvasGateway: {
   active:true,
@@ -2885,13 +2891,17 @@ global.window = {SaaSCanvasGateway: {
 }};
 global.fetch = async path => {
   if(path === '/api/v1/generation-tasks/task-terminal-first') return new Response(JSON.stringify(terminal), {status:200});
-  if(path === '/api/v1/generation-tasks/task-terminal-first/media') return new Response(JSON.stringify([{media_id:'media-1'}]), {status:200});
+  if(path === '/api/v1/generation-tasks/task-terminal-first/media') {
+    mediaReads += 1;
+    return new Response(JSON.stringify(mediaReads === 1 ? [] : [{media_id:'media-1'}]), {status:200});
+  }
   throw new Error(`unexpected request: ${path}`);
 };
 global.setTimeout = callback => { callback(); return 1; };
 eval(source.slice(start, end));
 (async () => {
   const result = await pollSmartCanvasTask('task-terminal-first', {onMedia:items => delivered.push(...items)});
+  assert.equal(mediaReads, 2, 'successful task must wait for media visibility');
   assert.deepEqual(result.images.map(item => item.media_id), ['media-1']);
   assert.deepEqual(delivered.map(item => item.media_id), ['media-1']);
 })().catch(error => { console.error(error.stack || error); process.exitCode = 1; });

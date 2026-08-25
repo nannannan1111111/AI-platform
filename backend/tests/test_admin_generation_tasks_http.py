@@ -105,6 +105,9 @@ def test_administrator_lists_active_generation_tasks_across_accounts() -> None:
     ]
     assert {item["user_email"] for item in response.json()} == {"artist@example.com"}
     assert response.json()[1]["started_at"] == "2026-08-14T14:00:02Z"
+    assert all("prompt" not in item for item in response.json())
+    assert "管理任务 1" not in response.text
+    assert "管理任务 2" not in response.text
     assert "credit_freeze_id" not in response.text
     assert "provider_task_id" not in response.text
     assert client.get("/api/v1/admin/generation-tasks/active", headers=artist_headers).status_code == 403

@@ -384,11 +384,14 @@
     try {
       previewUrl = await loadThumbnailMedia(media.media_id);
     } catch (_) {
-      return null;
+      // A thumbnail can briefly lag behind the committed media row. Keep the
+      // authenticated content URL so the result remains displayable; later
+      // canvas hydration will retry the thumbnail without losing the result.
+      previewUrl = '';
     }
     return {
       url: mediaContentUrl(media.media_id),
-      thumbnail: previewUrl,
+      ...(previewUrl ? { thumbnail: previewUrl } : {}),
       media_id: media.media_id,
       generationTaskId: media.task_id,
       kind: 'image',
@@ -417,19 +420,31 @@
   }
 
   async function generationTaskResult(taskId) {
+    let delayMs = 800;
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      if (attempt > 0) {
+        await new Promise(resolve => (window.setTimeout || globalThis.setTimeout)(resolve, delayMs));
+        delayMs = Math.min(3000, Math.round(delayMs * 1.35));
+      }
+      const taskResponse = await saasFetch(`/api/v1/generation-tasks/${encodeURIComponent(taskId)}`);
+      if (!taskResponse.ok) return { task: null, media: [] };
+      const task = await taskResponse.json();
+      if (task?.status !== 'succeeded') return { task, media: [] };
+      const mediaResponse = await saasFetch(
+        `/api/v1/generation-tasks/${encodeURIComponent(taskId)}/media`,
+      );
+      if (!mediaResponse.ok) continue;
+      const mediaPayload = await mediaResponse.json();
+      const media = (await Promise.all(
+        (Array.isArray(mediaPayload) ? mediaPayload : []).map(previewMedia),
+      )).filter(Boolean);
+      const delivered = Math.max(0, Number(task.delivered_quantity || 0));
+      if (delivered > 0 && media.length < delivered) continue;
+      return { task, media };
+    }
     const taskResponse = await saasFetch(`/api/v1/generation-tasks/${encodeURIComponent(taskId)}`);
     if (!taskResponse.ok) return { task: null, media: [] };
-    const task = await taskResponse.json();
-    if (task?.status !== 'succeeded') return { task, media: [] };
-    const mediaResponse = await saasFetch(
-      `/api/v1/generation-tasks/${encodeURIComponent(taskId)}/media`,
-    );
-    if (!mediaResponse.ok) return { task, media: [] };
-    const media = await mediaResponse.json();
-    return {
-      task,
-      media: (await Promise.all((Array.isArray(media) ? media : []).map(previewMedia))).filter(Boolean),
-    };
+    return { task: await taskResponse.json(), media: [] };
   }
 
   async function mapWithConcurrency(values, limit, mapper) {

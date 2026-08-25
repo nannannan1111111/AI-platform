@@ -14890,7 +14890,12 @@ async function pollSmartCanvasTask(taskId, observers={}){
                 if(task.status === 'succeeded'){
                     let mediaItems = [];
                     const mediaResponse = await fetch(`/api/v1/generation-tasks/${encodeURIComponent(taskId)}/media`);
-                    if(mediaResponse.ok) mediaItems = await mediaResponse.json();
+                    // The task transition and media registration are committed by
+                    // separate database operations. Keep the task in recovery
+                    // until the already-delivered media is visible instead of
+                    // treating a transient empty list as a missing result.
+                    if(!mediaResponse.ok) continue;
+                    mediaItems = await mediaResponse.json();
                     if(window.SaaSCanvasGateway?.previewMedia){
                         mediaItems = (await Promise.all(
                             (Array.isArray(mediaItems) ? mediaItems : []).map(item => (
@@ -14899,6 +14904,8 @@ async function pollSmartCanvasTask(taskId, observers={}){
                         )).filter(Boolean);
                     }
                     await notifyMedia(mediaItems);
+                    const delivered = Math.max(0, Number(task.delivered_quantity || 0));
+                    if(delivered > 0 && mediaItems.length < delivered) continue;
                     return task.result || {images:mediaItems};
                 }
                 if(['failed', 'cancelled', 'canceled'].includes(task.status)){

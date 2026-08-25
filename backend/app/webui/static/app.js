@@ -2029,8 +2029,55 @@ function bindImageMaskEditor() {
   });
 }
 
+async function loadImageSessionMedia(taskId, expectedQuantity = 0) {
+  let delayMs = 800;
+  let lastError = null;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    if (attempt) {
+      await new Promise(resolve => (window.setTimeout || globalThis.setTimeout)(resolve, delayMs));
+      delayMs = Math.min(3000, Math.round(delayMs * 1.35));
+    }
+    try {
+      const media = await api(`/api/v1/generation-tasks/${encodeURIComponent(taskId)}/media`);
+      const uniqueMedia = [...new Map((Array.isArray(media) ? media : []).map(item => [
+        item.media_id || item.result_reference,
+        item,
+      ])).values()];
+      if (expectedQuantity > 0 && uniqueMedia.length < expectedQuantity) {
+        lastError = new Error('生成图片正在入库，请稍候');
+        continue;
+      }
+      return uniqueMedia;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('生成图片结果暂时不可用，请稍后重新进入页面查看');
+}
+
+async function imageSessionPreviewUrl(media) {
+  let delayMs = 300;
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt) {
+      await new Promise(resolve => (window.setTimeout || globalThis.setTimeout)(resolve, delayMs));
+      delayMs = Math.min(1200, Math.round(delayMs * 1.5));
+    }
+    try {
+      return await authenticatedMediaObjectUrl(media, { thumbnail: true });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  try {
+    return await authenticatedMediaObjectUrl(media);
+  } catch (error) {
+    throw lastError || error;
+  }
+}
+
 async function completeImageSessionEntry(entry, task) {
-  const media = await api(`/api/v1/generation-tasks/${encodeURIComponent(task.task_id)}/media`);
+  const media = await loadImageSessionMedia(task.task_id, Math.max(0, Number(task.delivered_quantity || task.quantity || 0)));
   const uniqueMedia = [...new Map((Array.isArray(media) ? media : []).map(item => [
     item.media_id || item.result_reference,
     item,
@@ -2038,7 +2085,7 @@ async function completeImageSessionEntry(entry, task) {
   entry.media = await Promise.all(uniqueMedia.map(async (item, index) => ({
       ...item,
       sessionNumber: entry.startNumber + index,
-      previewUrl: await authenticatedMediaObjectUrl(item, { thumbnail: true }),
+      previewUrl: await imageSessionPreviewUrl(item),
   })));
   entry.status = 'succeeded';
   entry.taskId = task.task_id;
@@ -2053,9 +2100,9 @@ async function updateImageSessionMedia(entry, media) {
   if (!additions.length) return;
   const startOffset = (entry.media || []).length;
   const hydrated = await Promise.all(additions.map(async (item, index) => ({
-    ...item,
-    sessionNumber: entry.startNumber + startOffset + index,
-    previewUrl: await authenticatedMediaObjectUrl(item, { thumbnail: true }),
+      ...item,
+      sessionNumber: entry.startNumber + startOffset + index,
+      previewUrl: await imageSessionPreviewUrl(item),
   })));
   entry.media = [...(entry.media || []), ...hydrated];
   renderImageSessionResults();
@@ -2935,7 +2982,7 @@ function adminGenerationTasksTable(tasks) {
   const statusLabels = { queued: '排队中', running: '生成中' };
   return `<div class="table-wrap admin-generation-task-table"><table><thead><tr><th>用户</th><th>任务</th><th>模型 / 规格</th><th>数量</th><th>冻结额度</th><th>状态</th><th>提交 / 开始时间</th><th>操作</th></tr></thead><tbody>${tasks.map(task => `<tr>
     <td><strong>${escapeHTML(task.user_email || '未知用户')}</strong><br><span class="mono">${escapeHTML(task.user_id)}</span></td>
-    <td><span class="mono">${escapeHTML(task.task_id)}</span><br><span class="muted">${escapeHTML(String(task.prompt || '').slice(0, 60) || '—')}</span></td>
+    <td><span class="mono">${escapeHTML(task.task_id)}</span></td>
     <td><strong>${escapeHTML(task.logical_model)}</strong><br><span class="muted">${escapeHTML(task.output_spec)}</span></td>
     <td>${Number(task.quantity)}</td><td>${formatCredits(task.frozen_credits)}</td>
     <td><span class="status ${escapeHTML(task.status)}">${escapeHTML(statusLabels[task.status] || task.status)}</span></td>
