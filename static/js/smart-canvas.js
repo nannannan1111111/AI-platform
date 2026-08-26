@@ -714,14 +714,7 @@ function smartLoopRoundSettings(runSettings, ctx=smartLoopContext){
 function isGptImageAutoSizeModel(model){
     const raw = String(model || '').trim().toLowerCase();
     const normalized = raw.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    const compact = raw.replace(/[^a-z0-9]+/g, '');
-    return normalized === 'gpt-image-2'
-        || normalized.startsWith('gpt-image-2-')
-        || normalized.endsWith('-gpt-image-2')
-        || normalized.includes('-gpt-image-2-')
-        || compact === 'gptimage2'
-        || compact.startsWith('gptimage2')
-        || compact.endsWith('gptimage2');
+    return /(?:^|-)(?:gpt-?image-?2|image-?2)(?:-|$)/.test(normalized);
 }
 function defaultSmartApiResolution(model){
     return isGptImageAutoSizeModel(model) ? '4k' : '1k';
@@ -6407,7 +6400,8 @@ function downloadNameForMediaItem(item, fallbackPrefix='canvas-output'){
 async function downloadMediaItem(item, fallbackPrefix){
     if(!item?.url) return false;
     const name = downloadNameForMediaItem(item, fallbackPrefix);
-    const response = await fetch(item.url);
+    const originalUrl = await smartOriginalForInteraction(item);
+    const response = originalUrl === item.url ? await fetch(item.url) : await fetch(originalUrl);
     if(!response.ok) throw new Error((await response.text()) || '下载失败');
     const href = URL.createObjectURL(await response.blob());
     const link = document.createElement('a');
@@ -10768,15 +10762,18 @@ function openImageEditor(nodeId, imageIndex=0){
         if(img.getAttribute('src') !== primaryEditorSrc) img.src = primaryEditorSrc;
     };
     if(window.SaaSCanvasGateway?.active && image.media_id){
-        img.dataset.editorQuick = '1';
-        img.src = quickEditorSrc || image.thumbnail || '';
+        // Canvas nodes use the authenticated original for every explicit
+        // interaction. Thumbnails remain limited to the node surface only.
+        img.dataset.editorQuick = '';
         smartOriginalForInteraction(image).then(originalSrc => {
             if(!cropState || cropState.nodeId !== nodeId || cropState.imageIndex !== imageIndex) return;
             if(!imageEditModal.classList.contains('open') || img.dataset.editorSrcToken !== editorSrcToken) return;
             primaryEditorSrc = originalSrc;
-            img.dataset.editorQuick = '';
             if(originalSrc && img.getAttribute('src') !== originalSrc) img.src = originalSrc;
-        }).catch(() => {});
+        }).catch(() => {
+            img.dataset.editorQuick = '1';
+            img.src = quickEditorSrc || image.thumbnail || '';
+        });
     } else if(quickEditorSrc && quickEditorSrc !== primaryEditorSrc){
         img.dataset.editorQuick = '1';
         img.src = quickEditorSrc;

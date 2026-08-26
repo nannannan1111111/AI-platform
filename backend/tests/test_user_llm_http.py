@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -64,3 +65,34 @@ def test_canvas_llm_uses_current_accounts_provider_and_key() -> None:
     assert seen["authorization"] == "Bearer owner-key"
     assert seen["url"] == "https://llm.example/v1/chat/completions"
     assert "model-a" in seen["body"]
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (
+            {"choices": [{"message": {"content": [{"type": "text", "text": "第一段"}, {"text": "第二段"}]}}]},
+            "第一段第二段",
+        ),
+        ({"output_text": "顶层返回"}, "顶层返回"),
+        ({"choices": [{"text": "旧版返回"}]}, "旧版返回"),
+    ],
+)
+def test_canvas_llm_preserves_text_from_compatible_upstream_shapes(
+    payload: dict[str, object],
+    expected: str,
+) -> None:
+    def upstream(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    client, _ = _client(httpx.MockTransport(upstream))
+    headers = _register(client, f"{expected}@example.com")
+    client.post("/api/v1/llm-providers", headers=headers, json={
+        "code": "mine", "display_name": "我的模型", "base_url": "https://llm.example/v1",
+        "api_key": "owner-key", "models": ["model-a"], "enabled": True,
+    })
+    response = client.post("/api/v1/canvas-llm", headers=headers, json={
+        "provider": "mine", "model": "model-a", "message": "你好",
+    })
+    assert response.status_code == 200
+    assert response.json() == {"text": expected}

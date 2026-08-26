@@ -492,16 +492,11 @@ class OpenAICompatibleImageSubmissions:
 
 def _is_gpt_image_2(model: str) -> bool:
     normalized = re.sub(r"[^a-z0-9]+", "-", model.strip().lower()).strip("-")
-    return (
-        normalized == "gpt-image-2"
-        or normalized.startswith("gpt-image-2-")
-        or normalized.endswith("-gpt-image-2")
-        or "-gpt-image-2-" in normalized
-    )
+    return bool(re.search(r"(?:^|-)(?:gpt-?image-?2|image-?2)(?:-|$)", normalized))
 
 
 def _should_stream_image_response(model: str) -> bool:
-    """Request one long-lived response for every GPT-Image-2 generation."""
+    """Request one long-lived response for every image2-compatible generation."""
     return _is_gpt_image_2(model)
 
 

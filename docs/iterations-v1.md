@@ -89,6 +89,15 @@
 - 源码标签 `v1.0.14`，生产镜像 `creative-studio:single-host-candidate-v34@sha256:f3ae5b7fb609dd8baeeeaa2522b70a5df6891b47d592acc6cc63dd3ef7f89fe2`；回滚镜像 `creative-studio:single-host-rollback-v33@sha256:67e3640ed3a4fea16583d9a7632df82ef36892622773ad64f7c6588eda16801b`。
 - 部署时间 `2026-08-26T04:26:08Z`；Web 与 10 个 Worker 使用同一摘要，运行容器数量 11；迁移 head `0066_prompt_safety_risk_events`；发布脚本迁移、健康、就绪和镜像一致性门禁通过。
 
+## V1.0.15 / V35
+
+- 基于已部署 V34 继续开发，当前源码分支为 `codex/v35-llm-image2`。
+- LLM 上游只请求一次；兼容字符串、内容数组、顶层 `output_text` 和旧版 `choices[].text` 返回格式，避免上游已返回结果时因解析形态不兼容而误报失败。
+- 局部重绘统一放宽 `image2`、`image-2`、`gptimage2` 及带安全前后缀的模型名；`image21` 等不满足版本边界的名称仍拒绝。后端校验、Provider 流式模式和前端档位判断同步。
+- 无新增数据库迁移，不改变 V34 的画布缩略图优先、最多 4 并发、点击编辑下载使用原图、最近记录查看使用原图行为。
+- 定向测试 `80 passed`；完整后端 `659 passed, 5 skipped`，另有一个 V34 之前已存在的 `admin-vue-8` 静态版本断言失败（源码实际为 `admin-vue-9`）。JS 语法和 `git diff --check` 通过。
+- 源码标签 `v1.0.15`，建议镜像 `creative-studio:single-host-candidate-v35`；生产部署结果待补充实际签名摘要和验收证据。
+
 ## V1.0.13 / V33 已部署
 
 - 基于已部署 V32 `893376e`，分支 `codex/v33-progressive-workspace-loading`，未从旧目录、旧 ZIP、V17、干净 `main` 或其他 worktree 覆盖。

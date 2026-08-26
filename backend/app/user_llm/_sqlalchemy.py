@@ -41,6 +41,41 @@ def _clean(command: UserLLMProviderSave) -> tuple[str, str, str, tuple[str, ...]
     return code, name, base_url, models
 
 
+def _completion_text(payload: object) -> str | None:
+    """Extract text from the common OpenAI-compatible completion shapes."""
+    if not isinstance(payload, dict):
+        return None
+    output_text = payload.get("output_text")
+    if isinstance(output_text, str):
+        return output_text
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    first = choices[0]
+    if not isinstance(first, dict):
+        return None
+    message = first.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+            if parts:
+                return "".join(parts)
+        for key in ("output_text", "reasoning_content"):
+            value = message.get(key)
+            if isinstance(value, str):
+                return value
+    text = first.get("text")
+    return text if isinstance(text, str) else None
+
+
 class SqlAlchemyUserLLMProviders:
     def __init__(
         self,
@@ -168,7 +203,7 @@ class SqlAlchemyUserLLMProviders:
                     json={"model": model, "messages": messages},
                 )
                 response.raise_for_status()
-                text = response.json()["choices"][0]["message"]["content"]
+                text = _completion_text(response.json())
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
             raise UserLLMUpstreamError("LLM 请求失败，请检查 API 地址、密钥和模型配置") from exc
         if not isinstance(text, str):

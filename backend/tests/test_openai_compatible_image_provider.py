@@ -23,12 +23,19 @@ from app.model_routing import (
     ProviderProtocol,
 )
 from app.provider_images import OpenAICompatibleImageSubmissions
+from app.provider_images.openai_compatible import _uses_streaming
 
 _PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
 _JPEG_BYTES = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\xff\xd9"
 _WEBP_BYTES = b"RIFF\x0c\x00\x00\x00WEBPVP8 \x00\x00\x00\x00"
+
+
+def test_image2_alias_uses_long_lived_response_mode() -> None:
+    assert _uses_streaming(ImageResponseMode.AUTO, "image2") is True
+    assert _uses_streaming(ImageResponseMode.AUTO, "image-2-pro") is True
+    assert _uses_streaming(ImageResponseMode.AUTO, "image21") is False
 
 
 def test_sync_json_mode_does_not_request_sse_for_gpt_image_2() -> None:

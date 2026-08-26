@@ -2717,10 +2717,9 @@ async function openGenerationTaskViewer(task) {
   ));
   const previews = await Promise.all(visibleMedia.map(async media => {
     try {
-      const headers = new Headers({ Authorization: `Bearer ${state.token}` });
-      const response = await window.fetch(`/api/v1/media/${encodeURIComponent(media.media_id)}/content`, { headers });
-      if (!response.ok) return null;
-      const url = window.URL.createObjectURL(await response.blob());
+      // The history viewer is an explicit view action, so it reads the
+      // authenticated original rather than the bounded card thumbnail.
+      const url = await loadOriginalMediaUrl(media);
       previewUrls.push(url);
       return { media, url };
     } catch (_) {

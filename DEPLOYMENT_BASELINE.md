@@ -54,6 +54,15 @@ V32 于 2026-08-26 部署完成：Web 与 10 个 Generation Worker 使用同一�
 - 生产部署：已完成。镜像 `creative-studio:single-host-candidate-v34@sha256:f3ae5b7fb609dd8baeeeaa2522b70a5df6891b47d592acc6cc63dd3ef7f89fe2`；回滚镜像 `creative-studio:single-host-rollback-v33@sha256:67e3640ed3a4fea16583d9a7632df82ef36892622773ad64f7c6588eda16801b`。
 - 部署时间：`2026-08-26T04:26:08Z`；Web 与 10 个 Worker 使用同一 V34 摘要，运行容器数量 11；迁移 head `0066_prompt_safety_risk_events`；发布脚本迁移、健康、就绪和镜像一致性门禁通过。
 
+## V1.0.15 / V35 候选
+
+- 基线：已部署 V34；当前开发分支 `codex/v35-llm-image2`，未从旧目录、旧 ZIP、V17、干净 `main` 或其他 worktree 覆盖。
+- 功能：兼容常见 OpenAI-compatible LLM 返回格式，保持单次上游调用；放宽局部重绘 `image2` 别名识别并同步 Provider/前端判断，保留 `image21` 边界拒绝。
+- 数据安全：无新增数据库迁移；不重复上游请求、不重复扣费/退款或额度流水；不删除历史媒体、画布或用户资源；V34 缩略图和原图交互行为保持。
+- 验证：定向 `80 passed`；完整后端 `659 passed, 5 skipped`，另有 V34 既有 `admin-vue-8` 静态断言失败；JS 语法和 `git diff --check` 通过。
+- 建议源码标签：`v1.0.15`；建议镜像：`creative-studio:single-host-candidate-v35`。
+- 生产部署：待完成。部署后必须记录实际镜像摘要、上一版本回滚摘要、部署时间、迁移 head、健康/就绪和 Web/10 Worker 一致性。
+
 ## V1.0.13 / V33 已部署
 
 - 基线：已部署 V32 `893376e`，分支 `codex/v33-progressive-workspace-loading`。

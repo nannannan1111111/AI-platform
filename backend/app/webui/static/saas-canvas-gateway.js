@@ -447,9 +447,9 @@
     };
   }
 
-  async function restoreCanvasMediaPreviews(value) {
+  async function restoreCanvasMediaPreviews(value, onMediaHydrated = null) {
     if (Array.isArray(value)) {
-      await Promise.all(value.map(restoreCanvasMediaPreviews));
+      await Promise.all(value.map(item => restoreCanvasMediaPreviews(item, onMediaHydrated)));
       return;
     }
     if (!value || typeof value !== 'object') return;
@@ -467,7 +467,17 @@
         try { value.thumbnail = await loadOriginalMedia(mediaId); } catch (_) {}
       }
     }
-    await Promise.all(Object.values(value).map(restoreCanvasMediaPreviews));
+    if (mediaId && typeof onMediaHydrated === 'function') {
+      await onMediaHydrated(value);
+    }
+    await Promise.all(Object.values(value).map(item => restoreCanvasMediaPreviews(item, onMediaHydrated)));
+  }
+
+  function emitCanvasHydration(value) {
+    if (typeof window.dispatchEvent !== 'function' || typeof window.CustomEvent !== 'function') return;
+    window.dispatchEvent(new CustomEvent('saas-canvas-hydrated', {
+      detail: { canvas: legacyCanvas(value), hydrationOnly: true },
+    }));
   }
 
   async function generationTaskResult(taskId, { recovery = false } = {}) {
@@ -1107,10 +1117,12 @@
           writeCanvasSnapshot(value);
           await recoverUntrackedCanvasTasks(value);
           await restoreGenerationResults(value);
-          await restoreCanvasMediaPreviews(value.document);
-          window.dispatchEvent(new CustomEvent('saas-canvas-hydrated', {
-            detail: { canvas: legacyCanvas(value), hydrationOnly: true },
-          }));
+          let emittedMediaHydration = false;
+          await restoreCanvasMediaPreviews(value.document, () => {
+            emittedMediaHydration = true;
+            emitCanvasHydration(value);
+          });
+          if (!emittedMediaHydration) emitCanvasHydration(value);
         } catch (_) {}
       })();
       return localJsonResponse({ canvas: initialCanvas }, 200);
@@ -1135,11 +1147,13 @@
       try {
         await recoverUntrackedCanvasTasks(value);
         await restoreGenerationResults(value);
-        await restoreCanvasMediaPreviews(value.document);
+        let emittedMediaHydration = false;
+        await restoreCanvasMediaPreviews(value.document, () => {
+          emittedMediaHydration = true;
+          emitCanvasHydration(value);
+        });
         writeCanvasSnapshot(value);
-        window.dispatchEvent(new CustomEvent('saas-canvas-hydrated', {
-          detail: { canvas: legacyCanvas(value), hydrationOnly: true },
-        }));
+        if (!emittedMediaHydration) emitCanvasHydration(value);
       } catch (_) {
         // Keep the saved canvas usable if optional background hydration fails.
       }

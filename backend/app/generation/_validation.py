@@ -108,7 +108,7 @@ def validated_submission(submission: GenerationSubmission) -> GenerationSubmissi
     if inferred_operation == "generate" and input_fidelity != "auto":
         raise InvalidGenerationRequest("图片生成不支持输入保真度")
     if inferred_operation == "inpaint" and not _is_gpt_image_2(submission.logical_model):
-        raise InvalidGenerationRequest("局部重绘当前仅支持 gpt-image-2")
+        raise InvalidGenerationRequest("局部重绘当前仅支持 image2 模型")
     return replace(
         submission,
         params=GenerationParameters(
@@ -126,10 +126,5 @@ def validated_submission(submission: GenerationSubmission) -> GenerationSubmissi
 
 
 def _is_gpt_image_2(model: str) -> bool:
-    normalized = model.strip().lower().replace("_", "-")
-    return (
-        normalized == "gpt-image-2"
-        or normalized.startswith("gpt-image-2-")
-        or normalized.endswith("-gpt-image-2")
-        or "-gpt-image-2-" in normalized
-    )
+    normalized = re.sub(r"[^a-z0-9]+", "-", model.strip().lower()).strip("-")
+    return bool(re.search(r"(?:^|-)(?:gpt-?image-?2|image-?2)(?:-|$)", normalized))

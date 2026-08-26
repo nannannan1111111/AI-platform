@@ -106,3 +106,79 @@ URL.createObjectURL = () => 'blob:thumb'; URL.revokeObjectURL = () => {};
 """
     result = subprocess.run(["node", "-e", harness], input=gateway.text, text=True, capture_output=True, check=False)
     assert result.returncode == 0, result.stderr
+
+
+def test_v34_canvas_thumbnails_render_progressively_with_four_requests_max() -> None:
+    client = TestClient(create_app(InMemoryAccountAccess()))
+    gateway = client.get("/web-assets/saas-canvas-gateway.js")
+    harness = r"""
+const assert = require('node:assert/strict');
+const source = require('node:fs').readFileSync(0, 'utf8');
+const imageCount = 6;
+let active = 0;
+let peak = 0;
+const hydratedCounts = [];
+const images = Array.from({length:imageCount}, (_, index) => ({
+  media_id:`media-${index + 1}`, kind:'image',
+  url:`/api/v1/media/media-${index + 1}/content`,
+}));
+const canvas = {
+  canvas_id:'canvas-progressive-v34', title:'Progressive', kind:'smart', version:1,
+  created_at:'2026-08-20T00:00:00Z', updated_at:'2026-08-20T00:00:00Z',
+  document:{nodes:[{id:'n1', type:'smart-image', images}], connections:[]},
+};
+const json = value => new Response(JSON.stringify(value), {
+  status:200, headers:{'Content-Type':'application/json'},
+});
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function nativeFetch(input) {
+  const path = String(input);
+  if (path === '/api/v1/canvases/canvas-progressive-v34') return json(canvas);
+  if (path.includes('/generation-tasks/')) return json([]);
+  if (path.includes('/thumbnail?size=512')) {
+    active += 1;
+    peak = Math.max(peak, active);
+    await wait(3);
+    active -= 1;
+    return new Response(new Uint8Array([1,2,3]), {
+      status:200, headers:{'Content-Type':'image/webp'},
+    });
+  }
+  throw new Error(`unexpected request: ${path}`);
+}
+global.window = {
+  location:{pathname:'/workspace/canvases/canvas-progressive-v34/smart', origin:'http://test', replace(){}},
+  sessionStorage:{getItem(){return 'token';}, setItem(){}, removeItem(){}},
+  fetch:nativeFetch, setTimeout, clearTimeout,
+  addEventListener(){},
+  dispatchEvent(event){
+    if (event.type !== 'saas-canvas-hydrated') return;
+    const current = event.detail.canvas.nodes[0].images;
+    hydratedCounts.push(current.filter(item => String(item.thumbnail || '').startsWith('blob:')).length);
+  },
+  CustomEvent:class CustomEvent {
+    constructor(type, init){this.type=type; this.detail=init.detail;}
+  },
+};
+global.document = {getElementById(){return null;}, body:{appendChild(){}}, createElement(){return {};}};
+let blobIndex = 0;
+URL.createObjectURL = () => `blob:thumb-${++blobIndex}`;
+URL.revokeObjectURL = () => {};
+(async () => {
+  eval(source);
+  const response = await window.fetch('/api/canvases/canvas-progressive-v34');
+  const initial = (await response.json()).canvas;
+  assert.equal(initial.nodes[0].images.filter(item => String(item.thumbnail || '').startsWith('data:')).length, imageCount);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.ok(peak <= 4, `thumbnail concurrency exceeded four: ${peak}`);
+  assert.ok(hydratedCounts.length >= imageCount, `expected progressive events: ${hydratedCounts}`);
+  assert.ok(hydratedCounts.slice(0, imageCount).every((count, index) => count >= index + 1));
+})().catch(error => {console.error(error.stack || error); process.exitCode = 1;});
+"""
+    result = subprocess.run(
+        ["node", "-e", harness],
+        input=gateway.text.encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
