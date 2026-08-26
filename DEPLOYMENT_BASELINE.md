@@ -4,17 +4,17 @@
 
 截至 2026-08-26，当前生产基线为：
 
-- 运行镜像：`creative-studio:single-host-candidate-v31`
-- 运行镜像摘要：`sha256:d5a438bed458cc532c63f7b92cc3e6bf1e203bc1f312e08b379c8ab18d4fa253`
-- 回滚镜像：`creative-studio:single-host-rollback-v31`
-- 回滚镜像摘要：`sha256:046baa8e8595a574517fc52aacceb1871d3dae26e3685930275c377fc67cc70`
+- 运行镜像：`creative-studio:single-host-candidate-v32`
+- 运行镜像摘要：`sha256:a0be4436d537ae85678bc931faecd288b5330d382711b4e662175abf18dcc9d0`
+- 回滚镜像：`creative-studio:single-host-rollback-v32`
+- 回滚镜像摘要：与 V32 运行镜像相同的不可变 V32 回滚副本
 - Compose：`/opt/infinite-canvas/compose.production.yml`
 - 环境文件：`/etc/infinite-canvas/single-host.env`
 - Generation Worker：10 个
 
 V28 及后续候选必须直接从当前生产镜像 V27（或服务器核实到的更新生产镜像）创建，先复制为不可变回滚标签，再叠加本次小范围补丁。不得重新从 V17、旧工作树或当前 `main` 的干净提交直接覆盖生产。
 
-V31 于 2026-08-26 部署完成：Web 与 10 个 Generation Worker 使用同一镜像；数据库迁移为 `0066_prompt_safety_risk_events`；回环 `/healthz`、`/readyz` 均通过。
+V32 于 2026-08-26 部署完成：Web 与 10 个 Generation Worker 使用同一镜像；数据库迁移为 `0066_prompt_safety_risk_events`；回环 `/healthz`、`/readyz` 均通过。
 
 ## V28 候选（未部署）
 
@@ -43,6 +43,16 @@ V31 于 2026-08-26 部署完成：Web 与 10 个 Generation Worker 使用同一�
 - 镜像：`creative-studio:single-host-candidate-v32@sha256:a0be4436d537ae85678bc931faecd288b5330d382711b4e662175abf18dcc9d0`。
 - 回滚镜像：`creative-studio:single-host-rollback-v32`（由当前 V31 运行 Web 容器保留）。
 - 验证：部署脚本迁移、健康、就绪和 Web/10 Worker 镜像一致性检查通过；运行容器数量 11，`/healthz` 与 `/readyz` 均返回正常。
+
+## V1.0.13 / V33 候选
+
+- 基线：已部署 V32 `893376e`，分支 `codex/v33-progressive-workspace-loading`。
+- 功能：画布列表元数据与缩略图渐进加载；编辑器保存文档先渲染、任务和媒体后台恢复；会话快照支持快速重进；图片页任务摘要先出、历史缩略图受控恢复。
+- 数据库迁移：无新增迁移，生产 head 保持 `0066_prompt_safety_risk_events`。
+- 数据安全：不重提上游任务、不重复扣费/退款、不改额度流水；不删除媒体或历史画布；原图仍只在放大、编辑或下载时读取。
+- 候选镜像：`creative-studio:single-host-candidate-v33`，部署后记录实际摘要。
+- 回滚：部署前保留 `creative-studio:single-host-rollback-v32`，失败自动恢复 V32。
+- 验证：后端 `647 passed, 5 skipped`，其中 1 个 V30 既有 `admin-vue-8` 静态缓存断言失败；V33 渐进测试 `2 passed`，任务/画布/媒体/SSE 定向 `330 passed, 1 skipped`，前端构建、JS/Python 语法及 `git diff --check` 通过。
 
 后续部署必须遵循：
 

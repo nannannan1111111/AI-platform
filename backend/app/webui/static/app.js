@@ -24,9 +24,13 @@ const state = {
   referenceMediaLoading: false,
   referenceMediaHydrated: false,
   canvasPreviewUrls: [],
+  canvasPreviewUrlsByCanvas: new Map(),
   canvasPreviewRefreshTimer: null,
   canvasListCache: null,
   canvasListCacheAt: 0,
+  imageModelCatalogCache: null,
+  imageModelCatalogCacheAt: 0,
+  imageModelCatalogPromise: null,
   navigationEpoch: 0,
   loadingRoute: '',
   loadingEpoch: 0,
@@ -173,6 +177,9 @@ function resetImageWorkspaceState() {
   state.maskMediaEntry = null;
   state.canvasListCache = null;
   state.canvasListCacheAt = 0;
+  state.imageModelCatalogCache = null;
+  state.imageModelCatalogCacheAt = 0;
+  state.imageModelCatalogPromise = null;
 }
 
 async function optionalApi(path, fallback) {
@@ -372,6 +379,21 @@ function shell(title, content, pageClass = '') {
     navigate('/login', { replace: true });
   });
   return true;
+}
+
+async function cachedImageModelCatalog() {
+  if (state.imageModelCatalogCache && Date.now() - state.imageModelCatalogCacheAt < ACCOUNT_CACHE_TTL_MS) {
+    return state.imageModelCatalogCache;
+  }
+  if (state.imageModelCatalogPromise) return state.imageModelCatalogPromise;
+  state.imageModelCatalogPromise = optionalApi('/api/v1/image-models', { data: [] })
+    .then(catalog => {
+      state.imageModelCatalogCache = catalog;
+      state.imageModelCatalogCacheAt = Date.now();
+      return catalog;
+    })
+    .finally(() => { state.imageModelCatalogPromise = null; });
+  return state.imageModelCatalogPromise;
 }
 
 function loadingPage(title) {
@@ -958,6 +980,18 @@ function latestCanvasPreviewTask(canvasId, tasks) {
 function clearCanvasPreviewUrls() {
   state.canvasPreviewUrls.forEach(url => window.URL.revokeObjectURL(url));
   state.canvasPreviewUrls = [];
+  state.canvasPreviewUrlsByCanvas.clear();
+}
+
+function clearCanvasPreviewUrlsExcept(keepUrls = new Set()) {
+  state.canvasPreviewUrls = state.canvasPreviewUrls.filter(url => {
+    if (keepUrls.has(url)) return true;
+    window.URL.revokeObjectURL(url);
+    return false;
+  });
+  [...state.canvasPreviewUrlsByCanvas.entries()].forEach(([canvasId, url]) => {
+    if (!keepUrls.has(url)) state.canvasPreviewUrlsByCanvas.delete(canvasId);
+  });
 }
 
 function canvasListCacheKey() {
@@ -987,16 +1021,19 @@ function persistCanvasListCache(canvases) {
 
 async function authenticatedCanvasPreviewUrl(media) {
   const headers = new Headers({ Authorization: `Bearer ${state.token}` });
-  const response = await window.fetch(`/api/v1/media/${encodeURIComponent(media.media_id)}/content`, { headers });
+  const response = await window.fetch(
+    `/api/v1/media/${encodeURIComponent(media.media_id)}/thumbnail?size=512`,
+    { headers },
+  );
   if (!response.ok) return '';
   const url = window.URL.createObjectURL(await response.blob());
   state.canvasPreviewUrls.push(url);
   return url;
 }
 
-async function loadCanvasPreviews(canvases) {
+async function loadCanvasPreviews(canvases, { onPreview = null } = {}) {
   const tasks = await optionalApi('/api/v1/generation-tasks/recent?limit=100', []);
-  const entries = await Promise.all(canvases.map(async canvas => {
+  const entries = await mapWithConcurrency(canvases, 4, async canvas => {
     let task = latestCanvasPreviewTask(canvas.canvas_id, tasks);
     if (!task) {
       const canvasTasks = await optionalApi(
@@ -1005,19 +1042,26 @@ async function loadCanvasPreviews(canvases) {
       );
       task = latestCanvasPreviewTask(canvas.canvas_id, canvasTasks);
     }
-    if (!task) return [canvas.canvas_id, {status: 'empty'}];
-    if (['queued', 'running'].includes(task.status)) {
-      return [canvas.canvas_id, {status: 'generating'}];
+    let preview;
+    if (!task) preview = {status: 'empty'};
+    if (task && ['queued', 'running'].includes(task.status)) {
+      preview = {status: 'generating'};
     }
-    const media = await optionalApi(`/api/v1/generation-tasks/${encodeURIComponent(task.task_id)}/media`, []);
-    const available = media
-      .filter(item => item.kind === 'image' && ['temporary', 'persistent'].includes(item.state)
-        && (!item.expires_at || new Date(item.expires_at).getTime() > Date.now()))
-      .sort((left, right) => Date.parse(right.created_at || '') - Date.parse(left.created_at || ''));
-    if (!available.length) return [canvas.canvas_id, {status: 'empty'}];
-    const url = await authenticatedCanvasPreviewUrl(available[0]);
-    return [canvas.canvas_id, url ? {status: 'ready', url} : {status: 'empty'}];
-  }));
+    if (!preview) {
+      const media = await optionalApi(`/api/v1/generation-tasks/${encodeURIComponent(task.task_id)}/media`, []);
+      const available = media
+        .filter(item => item.kind === 'image' && ['temporary', 'persistent'].includes(item.state)
+          && (!item.expires_at || new Date(item.expires_at).getTime() > Date.now()))
+        .sort((left, right) => Date.parse(right.created_at || '') - Date.parse(left.created_at || ''));
+      if (!available.length) preview = {status: 'empty'};
+      else {
+        const url = await authenticatedCanvasPreviewUrl(available[0]);
+        preview = url ? {status: 'ready', url} : {status: 'empty'};
+      }
+    }
+    if (onPreview) onPreview(canvas.canvas_id, preview);
+    return [canvas.canvas_id, preview];
+  });
   return new Map(entries);
 }
 
@@ -1026,7 +1070,7 @@ function canvasesTable(canvases, previews = new Map()) {
     return '<div class="empty">当前账户空间还没有画布。输入名称创建第一张无限画布。</div>';
   }
   return `<div class="table-wrap canvas-list-table"><table><thead><tr><th>效果图</th><th>画布名称</th><th>版本</th><th>更新时间</th><th>画布类型</th><th>操作</th></tr></thead><tbody>${canvases.map(canvas => `<tr>
-    <td>${canvasPreviewHTML(previews.get(canvas.canvas_id))}</td>
+    <td data-canvas-preview-cell="${escapeHTML(canvas.canvas_id)}">${canvasPreviewHTML(previews.get(canvas.canvas_id))}</td>
     <td><strong>${escapeHTML(canvas.title || '未命名画布')}</strong></td>
     <td>${escapeHTML(canvas.version)}</td>
     <td>${formatDate(canvas.updated_at)}</td>
@@ -1171,22 +1215,52 @@ async function workspaceCanvasesPage({ background = false } = {}) {
   try {
     window.clearTimeout(state.canvasPreviewRefreshTimer);
     state.canvasPreviewRefreshTimer = null;
-    clearCanvasPreviewUrls();
+    if (!background) clearCanvasPreviewUrls();
     await ensureAccountSummary();
     const canvases = (await optionalApi('/api/v1/canvases', []))
       .sort((left, right) => {
         const createdDifference = Date.parse(right.created_at || '') - Date.parse(left.created_at || '');
         return createdDifference || String(right.canvas_id || '').localeCompare(String(left.canvas_id || ''));
       });
-    const previews = await loadCanvasPreviews(canvases);
     persistCanvasListCache(canvases);
-    shell('无限画布', canvasWorkspaceContent(canvases, previews));
-    bindCanvasListActions();
+    // Make the list actionable before task/media preview hydration finishes.
+    if (!background && state.route === '/workspace/canvases') {
+      shell('无限画布', canvasWorkspaceContent(canvases));
+      bindCanvasListActions();
+    }
+    const updatePreview = (canvasId, preview) => {
+      if (state.route !== '/workspace/canvases') return;
+      const cell = document.querySelector(`[data-canvas-preview-cell="${CSS.escape(canvasId)}"]`);
+      if (!cell) return;
+      const previousUrl = state.canvasPreviewUrlsByCanvas.get(canvasId);
+      if (previousUrl && previousUrl !== preview?.url) {
+        window.URL.revokeObjectURL(previousUrl);
+        state.canvasPreviewUrls = state.canvasPreviewUrls.filter(url => url !== previousUrl);
+      }
+      if (preview?.url) state.canvasPreviewUrlsByCanvas.set(canvasId, preview.url);
+      else state.canvasPreviewUrlsByCanvas.delete(canvasId);
+      cell.innerHTML = canvasPreviewHTML(preview);
+    };
+    const previews = await loadCanvasPreviews(canvases, { onPreview: updatePreview });
+    if (state.route !== '/workspace/canvases') return;
 
-    if ([...previews.values()].some(preview => preview.status === 'generating')) {
+    const scheduleGeneratingPreviewRefresh = () => {
       state.canvasPreviewRefreshTimer = window.setTimeout(() => {
-        if (state.route === '/workspace/canvases') void workspaceCanvasesPage({ background: true });
-      }, 4000);
+        if (state.route !== '/workspace/canvases') return;
+        const generatingCanvases = canvases.filter(
+          canvas => previews.get(canvas.canvas_id)?.status === 'generating',
+        );
+        void loadCanvasPreviews(generatingCanvases, { onPreview: updatePreview }).then(nextPreviews => {
+          if (state.route !== '/workspace/canvases') return;
+          nextPreviews.forEach((preview, canvasId) => previews.set(canvasId, preview));
+          if ([...nextPreviews.values()].some(preview => preview.status === 'generating')) {
+            scheduleGeneratingPreviewRefresh();
+          }
+        });
+      }, 15000);
+    };
+    if ([...previews.values()].some(preview => preview.status === 'generating')) {
+      scheduleGeneratingPreviewRefresh();
     }
 
   } catch (error) {
@@ -1611,6 +1685,12 @@ function imageSessionResultsHTML() {
   </div>`;
   const cards = [...state.imageSessionEntries].reverse().flatMap(entry => {
     const newestMedia = [...(entry.media || [])].reverse();
+    if (entry.status === 'restoring') return [`
+      <figure class="image-session-card image-generation-pending">
+        <span class="image-result-number">#${entry.startNumber}</span>
+        <div class="image-session-pending-body"><span class="image-generation-spinner" aria-hidden="true">↻</span><strong>正在恢复历史结果</strong></div>
+        <figcaption><span>缩略图加载中</span><small>${escapeHTML(entry.logicalModel)}</small></figcaption>
+      </figure>`];
     if (entry.status === 'pending') {
       const queued = entry.taskStatus === 'queued';
       const completedActivityLabel = queued ? '其他图片正在排队' : '下一张正在生图';
@@ -1761,10 +1841,9 @@ async function restoreRecentImageResults() {
       nextNumber += quantity;
       return { task, startNumber, quantity };
     });
-    const entries = (await runBounded(taskEntries, 4, async ({ task, startNumber, quantity }) => {
-      if (['queued', 'running'].includes(task.status)) return {
+    const restoredEntries = taskEntries.map(({ task, startNumber, quantity }) => ({
         taskId: task.task_id,
-        status: 'pending',
+        status: ['queued', 'running'].includes(task.status) ? 'pending' : 'restoring',
         taskStatus: task.status,
         quantity,
         startNumber,
@@ -1773,16 +1852,25 @@ async function restoreRecentImageResults() {
         params: task.params || {},
         createdAt: task.created_at,
         media: [],
-      };
+      }));
+    if (state.route && !isImageWorkspaceRoute()) return;
+    const restoredTaskIds = new Set(restoredEntries.map(entry => entry.taskId));
+    const liveEntries = state.imageSessionEntries.filter(entry => !restoredTaskIds.has(entry.taskId));
+    state.imageSessionEntries = [...restoredEntries, ...liveEntries];
+    if (typeof renderImageSessionResults === 'function') renderImageSessionResults();
+    state.imageSessionEntries
+      .filter(entry => entry.status === 'pending')
+      .forEach(entry => { void observeImageSessionTask(entry); });
+    await runBounded(restoredEntries.filter(entry => entry.status === 'restoring'), 3, async entry => {
       try {
-        const taskMedia = await optionalApi(`/api/v1/generation-tasks/${encodeURIComponent(task.task_id)}/media`, []);
+        const taskMedia = await optionalApi(`/api/v1/generation-tasks/${encodeURIComponent(entry.taskId)}/media`, []);
         const available = taskMedia.filter(item => item.state === 'temporary'
           && (!item.expires_at || new Date(item.expires_at).getTime() > Date.now()));
-        const restored = await runBounded(available, 4, async (item, index) => {
+        const restored = await runBounded(available, 3, async (item, index) => {
           try {
             return {
               ...item,
-              sessionNumber: startNumber + index,
+              sessionNumber: entry.startNumber + index,
               // The workbench always paints a bounded thumbnail. The original
               // bytes are fetched only when the user opens or downloads one.
               previewUrl: await authenticatedMediaObjectUrl(item, { thumbnail: true }),
@@ -1793,38 +1881,18 @@ async function restoreRecentImageResults() {
           }
         });
         const media = restored.filter(Boolean);
-        return media.length ? {
-          taskId: task.task_id,
-          status: 'succeeded',
-          quantity: media.length,
-          startNumber,
-          logicalModel: task.logical_model,
-          prompt: task.prompt,
-          params: task.params || {},
-          createdAt: task.created_at,
-          media,
-        } : null;
+        entry.media = media;
+        entry.quantity = media.length;
+        entry.status = media.length ? 'succeeded' : 'unavailable';
       } catch (_error) {
-        // A single stale task must not prevent the workbench from opening.
-        return null;
+        entry.status = 'unavailable';
+      } finally {
+        if (!state.route || isImageWorkspaceRoute()) {
+          state.imageSessionEntries = state.imageSessionEntries.filter(item => item.status !== 'unavailable');
+          renderImageSessionResults();
+        }
       }
-    })).filter(Boolean);
-    if (state.route && !isImageWorkspaceRoute()) return;
-    let nextLiveNumber = entries.reduce((total, entry) => total + entry.quantity, 0) + 1;
-    const restoredTaskIds = new Set(entries.map(entry => entry.taskId));
-    const liveEntries = state.imageSessionEntries.filter(entry => !restoredTaskIds.has(entry.taskId));
-    liveEntries.forEach(entry => {
-      const oldStartNumber = entry.startNumber;
-      entry.startNumber = nextLiveNumber;
-      (entry.media || []).forEach(media => {
-        media.sessionNumber = nextLiveNumber + Math.max(0, media.sessionNumber - oldStartNumber);
-      });
-      nextLiveNumber += entry.quantity;
     });
-    state.imageSessionEntries = [...entries, ...liveEntries];
-    state.imageSessionEntries
-      .filter(entry => entry.status === 'pending')
-      .forEach(entry => { void observeImageSessionTask(entry); });
   } finally {
     state.imageHistoryLoading = false;
     state.imageHistoryHydrated = true;
@@ -2501,7 +2569,7 @@ function workspaceImagesPage(forcedOperation = '') {
     });
     void Promise.all([
       ensureAccountSummary(),
-      optionalApi('/api/v1/image-models', { data: [] }),
+      cachedImageModelCatalog(),
     ]).then(([, catalog]) => {
       if (!isImageWorkspaceRoute()) return;
       const currentForm = app.querySelector('[data-image-generation-form]');

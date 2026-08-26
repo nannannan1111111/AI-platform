@@ -78,3 +78,13 @@
 - 管理员任务活动/历史投影与页面移除实际提示词显示，历史数据保留。
 - 生产镜像：`creative-studio:single-host-candidate-v32@sha256:a0be4436d537ae85678bc931faecd288b5330d382711b4e662175abf18dcc9d0`；回滚镜像 `creative-studio:single-host-rollback-v32` 已保留。
 - 部署脚本迁移、健康、就绪及 Web/10 Worker 镜像一致性检查通过；无新增迁移，生产 head 保持 `0066_prompt_safety_risk_events`。
+
+## V1.0.13 / V33 候选
+
+- 基于已部署 V32 `893376e`，分支 `codex/v33-progressive-workspace-loading`，未从旧目录、旧 ZIP、V17、干净 `main` 或其他 worktree 覆盖。
+- 无限画布列表先展示画布元数据，再以 4 路受控并发回填 `/thumbnail?size=512`；生成中仅每 15 秒刷新仍在生成的画布。
+- 画布编辑器先渲染保存的节点、连线和视口，后台恢复任务与媒体；会话快照只存稳定 JSON，重进后后台校验并合并结果。
+- 图片生成页先展示任务摘要，历史成功结果按 3 路受控并发加载缩略图；活动任务保持既有 SSE 与受控轮询。
+- 无新增数据库迁移；不重提上游、不重复扣费/退款、不改额度流水，不删除历史画布或媒体。
+- 候选镜像建议：`creative-studio:single-host-candidate-v33`；部署前保留 V32 回滚镜像。
+- 验证：完整后端 `647 passed, 5 skipped`，另有一个 V30 既有 `admin-vue-8` 静态缓存断言失败；V33 渐进测试 `2 passed`，定向 `330 passed, 1 skipped`，前端构建、JS/Python 语法和 `git diff --check` 通过。

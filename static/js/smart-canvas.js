@@ -4814,6 +4814,7 @@ const smartClientId = `canvas_smart_${Math.random().toString(36).slice(2, 10)}${
 let canvasSyncInFlight = false;
 let canvasSyncTimer = null;
 let canvasMetaPollTimer = null;
+let canvasLocalEditPending = false;
 let connectionLayerRaf = 0;
 function smartCanvasManagedMediaUrls(){
     const urls = new Set();
@@ -4860,17 +4861,22 @@ function smartMediaIsExpired(itemOrUrl){
 }
 function mergeSmartImageLists(localImgs, remoteImgs){
     const out = [];
-    const seen = new Set();
+    const seen = new Map();
     (localImgs || []).forEach(img => {
-        const u = img && img.url;
+        const u = img && (img.media_id || img.url);
         if(u && seen.has(u)) return;
-        if(u) seen.add(u);
+        if(u) seen.set(u, out.length);
         out.push(img);
     });
     (remoteImgs || []).forEach(img => {
-        const u = img && img.url;
-        if(!u || seen.has(u)) return;
-        seen.add(u);
+        const u = img && (img.media_id || img.url);
+        if(!u) return;
+        if(seen.has(u)) {
+            const index = seen.get(u);
+            out[index] = {...out[index], ...img};
+            return;
+        }
+        seen.set(u, out.length);
         out.push(img);
     });
     return out;
@@ -5069,6 +5075,15 @@ function handleCanvasUpdatedMessage(data={}){
     if(remoteUpdatedAt && remoteUpdatedAt <= Number(canvas?.updated_at || 0)) return;
     scheduleCanvasMergeReload(200);
 }
+window.addEventListener('saas-canvas-hydrated', event => {
+    const hydrated = event.detail?.canvas;
+    if(!hydrated || !canvasId || hydrated.canvas_id !== canvasId || !canvas) return;
+    if(canvasLocalEditPending || canvasSyncInFlight || saveTimer) {
+        scheduleCanvasMergeReload(900);
+        return;
+    }
+    applyMergedServerCanvas(hydrated);
+});
 function startCanvasMetaPoll(){
     // WS / iframe 转发不可靠时的兜底：定期看服务器 updated_at 是否变新，变新就合并拉取
     if(canvasMetaPollTimer) return;
@@ -5532,8 +5547,10 @@ async function loadCanvas(){
         loadRecentSmartSettings();
         updateProviderModels();
         applyViewport();
-        await refreshSmartMediaAvailability();
         render();
+        // Availability checks are useful for stale media labels, but must not
+        // block the saved canvas and its thumbnails from becoming interactive.
+        void refreshSmartMediaAvailability().then(changed => { if(changed) render(); });
         if(cleanedDetachedInputs || cleanedCompletedState || hiddenCompletedTimers || prunedExpiredLogs) scheduleSave();
         resumeSmartPendingTasks();
         if(!window.SaaSCanvasGateway?.active) startCanvasMetaPoll();
@@ -5541,10 +5558,12 @@ async function loadCanvas(){
 }
 function scheduleSave(){
     clearTimeout(saveTimer);
+    canvasLocalEditPending = true;
     saveTimer = setTimeout(saveCanvas, 450);
 }
 async function saveCanvas(){
     if(!canvasId || !canvas) return;
+    saveTimer = null;
     savePromptDraftForCurrent();
     nodes.forEach(node => {
         if(node.unavailable) return;
@@ -5575,6 +5594,7 @@ async function saveCanvas(){
         if(res.ok){
             const data = await res.json();
             if(data.canvas && data.canvas.updated_at) canvas.updated_at = data.canvas.updated_at;
+            canvasLocalEditPending = false;
         } else if(res.status === 409) {
             // 冲突：别人先保存了。合并对方的状态（节点 id 合并、图片取并集，谁都不丢），
             // 然后用对方最新的 updated_at 作为基底重存，把合并结果落盘——而不是直接覆盖对方。
@@ -16777,12 +16797,12 @@ window.onload = async () => {
     loadPromptPresets();
     loadPromptTemplateGroups();
     loadPromptTemplateOverrides();
-    await loadPromptTemplates();
     if(window.StudioI18n) window.StudioI18n.apply();
     if(window.lucide) lucide.createIcons();
     connectAssetLibrarySyncSocket();
-    await loadConfig();
-    await loadAssetLibrary();
+    // These are independent optional panels. Loading them together removes
+    // avoidable serial latency before the canvas document is requested.
+    await Promise.all([loadPromptTemplates(), loadConfig(), loadAssetLibrary()]);
     await loadCanvas();
     syncApiKindToggleVisibility();
     render();
