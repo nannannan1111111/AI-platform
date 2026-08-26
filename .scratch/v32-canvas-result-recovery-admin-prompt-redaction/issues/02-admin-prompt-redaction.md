@@ -1,7 +1,7 @@
 # 管理员任务明细提示词脱敏
 
 Type: task
-Status: claimed
+Status: resolved
 
 ## 问题
 
@@ -14,3 +14,7 @@ Status: claimed
 ## Comments
 
 - 不修改数据库中的历史提示词，只限制管理员任务明细 API/UI 的输出。
+
+## Answer
+
+V32 管理员任务接口投影和两套任务页面均移除实际 `prompt` 字段；数据库历史提示词未删除，普通用户任务接口保持原有行为。相关 API 与 UI 回归测试通过。

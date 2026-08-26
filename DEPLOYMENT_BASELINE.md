@@ -34,6 +34,16 @@ V31 于 2026-08-26 部署完成：Web 与 10 个 Generation Worker 使用同一�
 - 镜像：`creative-studio:single-host-candidate-v31`，摘要 `sha256:d5a438bed458cc532c63f7b92cc3e6bf1e203bc1f312e08b379c8ab18d4fa253`；回滚镜像 `creative-studio:single-host-rollback-v31`，摘要 `sha256:046baa8e8595a574517fc52aacceb1871d3dae26e3685930275c377fc67cc70`。
 - 验证：V31 定向后端、新增功能测试和前端构建通过；迁移 head、Web/Worker 镜像一致性、`/healthz`、`/readyz` 均通过；完整后端 `645 passed, 5 skipped`，另有 1 个 V30 既有 `admin-vue-8` 静态缓存断言失败。
 
+## V32 已部署
+
+- 基线：V31 `8db252e`（标签 `v1.0.11`），分支 `codex/v32-canvas-result-recovery-admin-prompt-redaction`。
+- 功能：画布和图片生成页在成功终态后有界等待媒体入库，缩略图失败回退鉴权原图，SSE 断开使用受控轮询；管理员任务明细不返回或显示用户实际提示词。
+- 数据库迁移：保持 `0066_prompt_safety_risk_events`，无新增迁移，不删除历史任务、媒体、提示词或额度流水。
+- 源码提交：`893376e`。
+- 镜像：`creative-studio:single-host-candidate-v32@sha256:a0be4436d537ae85678bc931faecd288b5330d382711b4e662175abf18dcc9d0`。
+- 回滚镜像：`creative-studio:single-host-rollback-v32`（由当前 V31 运行 Web 容器保留）。
+- 验证：部署脚本迁移、健康、就绪和 Web/10 Worker 镜像一致性检查通过；运行容器数量 11，`/healthz` 与 `/readyz` 均返回正常。
+
 后续部署必须遵循：
 
 1. 先在服务器核实当前 Web 与 Worker 的镜像标签/摘要，并从该生产镜像创建下一候选。

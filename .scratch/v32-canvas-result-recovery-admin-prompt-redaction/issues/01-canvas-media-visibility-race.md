@@ -1,7 +1,7 @@
 # 画布成功终态媒体可见性竞态
 
 Type: task
-Status: claimed
+Status: resolved
 
 ## 问题
 
@@ -14,3 +14,7 @@ Status: claimed
 ## Comments
 
 - 证据：V31 生产日志显示 Provider/OSS HTTP 200，数据库任务 `succeeded`、`delivered_quantity=1`；客户端成功后单次媒体读取存在可见性窗口。
+
+## Answer
+
+V32 已在图片生成页和智能画布同时实现有界媒体恢复：成功终态后按退避策略等待媒体达到交付数量，缩略图失败时回退鉴权原图；SSE 断开继续对同一任务受控轮询。不重新创建上游任务，不重复扣费或写入账务。部署脚本的迁移、健康、就绪及 Web/10 Worker 镜像一致性检查均通过。

@@ -70,3 +70,11 @@
 - 生产镜像：`creative-studio:single-host-candidate-v31@sha256:d5a438bed458cc532c63f7b92cc3e6bf1e203bc1f312e08b379c8ab18d4fa253`。
 - 回滚镜像：`creative-studio:single-host-rollback-v31@sha256:046baa8e8595a574517fc52aacceb1871d3dae26e3685930275c377fc67cc70`。
 - 已执行迁移 `0066_prompt_safety_risk_events`；Web 与 10 个 Worker 使用同一 V31 摘要，健康/就绪检查通过。
+
+## V1.0.12 / V32 已部署
+
+- 基于 V31 `8db252e` 继续开发，源码提交 `893376e`，未从旧目录、旧 ZIP、V17、干净 `main` 或其他 worktree 覆盖。
+- 画布和图片生成页统一采用任务终态后的有界媒体恢复：等待媒体达到 `delivered_quantity`，缩略图失败回退鉴权原图；SSE 断开继续对同一 task ID 受控轮询，不重提上游、不重复扣费。
+- 管理员任务活动/历史投影与页面移除实际提示词显示，历史数据保留。
+- 生产镜像：`creative-studio:single-host-candidate-v32@sha256:a0be4436d537ae85678bc931faecd288b5330d382711b4e662175abf18dcc9d0`；回滚镜像 `creative-studio:single-host-rollback-v32` 已保留。
+- 部署脚本迁移、健康、就绪及 Web/10 Worker 镜像一致性检查通过；无新增迁移，生产 head 保持 `0066_prompt_safety_risk_events`。
