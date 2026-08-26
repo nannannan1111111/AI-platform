@@ -230,6 +230,16 @@ URL.createObjectURL = () => 'blob:independent-thumb'; URL.revokeObjectURL = () =
     assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
 
 
+def test_v38_canvas_previews_bypass_native_lazy_loading() -> None:
+    client = TestClient(create_app(InMemoryAccountAccess()))
+    source = client.get("/static/js/smart-canvas.js")
+    assert source.status_code == 200
+    assert "function smartCanvasPreviewImgHtml" in source.text
+    assert "return smartPreviewImgHtml(itemOrUrl, size, attrs, 'eager');" in source.text
+    assert "return smartCanvasPreviewImgHtml(img, 768" in source.text
+    assert "return smartPreviewImgHtml({...item, url:thumb}, 256, 'class=\"asset-thumb\" loading=\"lazy\"" in source.text
+
+
 def test_v35_canvas_hydration_snapshot_survives_early_event() -> None:
     client = TestClient(create_app(InMemoryAccountAccess()))
     gateway = client.get("/web-assets/saas-canvas-gateway.js")

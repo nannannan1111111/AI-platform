@@ -84,6 +84,14 @@ V32 于 2026-08-26 部署完成：Web 与 10 个 Generation Worker 使用同一�
 - 生产已部署：2026-08-26；V36 摘要 `sha256:02cfe651ce5671320dd8da4e037249412cb8ae4436693b04d4770c5b8cc9cd27` 已保留为 `creative-studio:single-host-rollback-v36` 回滚副本。
 - 部署后验证：数据库迁移、健康/就绪检查及 Web/10 Worker 镜像一致性通过；公网 HTTPS `/readyz` 返回 `{"status":"ready"}`；运行容器数量 11。
 
+## V1.0.18 / V38 候选
+
+- 基于已部署 V37，继续在分支 `codex/v35-llm-image2` 上修改，未从其他版本或 worktree 覆盖。
+- 修复画布缩放/平移容器触发浏览器原生懒加载导致图片节点空白的问题；画布预览主动加载，素材库仍使用懒加载。
+- 无新增数据库迁移；V37 的缩略图独立恢复、最多 4 并发、原图编辑/下载及媒体归属行为保持。
+- 验证：画布媒体回归 `6 passed`；JavaScript 语法和 `git diff --check` 通过。
+- 建议源码标签：`v1.0.18`；部署前保留 V37 摘要 `sha256:4561442ff28bcca77818b779f8154dfae4ddf585f095dbb97c704a0f2f50067d` 用于回滚。
+
 ## V1.0.13 / V33 已部署
 
 - 基线：已部署 V32 `893376e`，分支 `codex/v33-progressive-workspace-loading`。

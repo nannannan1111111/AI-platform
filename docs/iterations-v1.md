@@ -120,6 +120,14 @@
 - 生产已部署：2026-08-26；V36 摘要 `sha256:02cfe651ce5671320dd8da4e037249412cb8ae4436693b04d4770c5b8cc9cd27` 已保留为 `creative-studio:single-host-rollback-v36` 回滚副本。
 - 部署后验证：数据库迁移、健康/就绪检查及 Web/10 Worker 镜像一致性通过；公网 HTTPS `/readyz` 返回 `{"status":"ready"}`；运行容器数量 11。
 
+## V1.0.18 / V38
+
+- 基于已部署 V37，继续在分支 `codex/v35-llm-image2` 上修改。
+- 修复画布节点处于缩放/平移 world 容器时被浏览器原生懒加载判定为离屏的问题；画布预览改为主动加载，素材库列表仍保留懒加载。
+- 网关最多 4 路缩略图并发、原图编辑/下载、媒体归属和保存删除行为保持；无新增数据库迁移。
+- 验证：画布媒体回归 `6 passed`；JavaScript 语法和 `git diff --check` 通过。
+- 源码标签：`v1.0.18`；生产镜像摘要待发布后记录。
+
 ## V1.0.13 / V33 已部署
 
 - 基于已部署 V32 `893376e`，分支 `codex/v33-progressive-workspace-loading`，未从旧目录、旧 ZIP、V17、干净 `main` 或其他 worktree 覆盖。

@@ -477,10 +477,17 @@ function smartOriginalMediaUrl(itemOrUrl){
 function smartMediaPreviewUrl(itemOrUrl, size=512){
     return StudioMedia.mediaPreviewUrl(itemOrUrl, size);
 }
-function smartPreviewImgHtml(itemOrUrl, size=512, attrs=''){
+function smartPreviewImgHtml(itemOrUrl, size=512, attrs='', loading='lazy'){
     const original = smartOriginalMediaUrl(itemOrUrl);
     const preview = smartMediaPreviewUrl(itemOrUrl, size);
-    return `<img loading="lazy" decoding="async" src="${escapeHtml(preview)}" data-preview-src="${escapeAttr(preview)}" data-original-src="${escapeAttr(original)}"${attrs ? ` ${attrs}` : ''}>`;
+    const safeLoading = loading === 'eager' ? 'eager' : 'lazy';
+    return `<img loading="${safeLoading}" decoding="async" src="${escapeHtml(preview)}" data-preview-src="${escapeAttr(preview)}" data-original-src="${escapeAttr(original)}"${attrs ? ` ${attrs}` : ''}>`;
+}
+function smartCanvasPreviewImgHtml(itemOrUrl, size=512, attrs=''){
+    // Canvas nodes live in a transformed world; native lazy loading can treat
+    // every node as offscreen. Thumbnail concurrency is already controlled by
+    // the SaaS gateway, so canvas previews must load eagerly once available.
+    return smartPreviewImgHtml(itemOrUrl, size, attrs, 'eager');
 }
 async function smartOriginalForInteraction(itemOrUrl){
     if(window.SaaSCanvasGateway?.active && window.SaaSCanvasGateway.loadOriginalMedia){
@@ -1750,7 +1757,7 @@ function smartNodeInputThumbsHtml(images, opts={}){
             ? `<div class="media-thumb audio-thumb"><i data-lucide="file-audio"></i><span>${escapeHtml(img.name || 'Audio')}</span></div>`
             : isVideoMediaItem(img)
             ? smartVideoPreviewHtml(img, 256, 'alt=""')
-            : smartPreviewImgHtml(img, 256, 'alt=""');
+            : smartCanvasPreviewImgHtml(img, 256, 'alt=""');
         return `<div class="smart-node-input-thumb" title="${escapeHtml(label)}">${media}<span class="smart-node-input-badge">${escapeHtml(label)}</span></div>`;
     }).join('');
     const more = refs.length > limit ? `<div class="smart-node-input-thumb smart-node-input-more">+${refs.length - limit}</div>` : '';
@@ -6175,7 +6182,7 @@ function thumbMediaHtml(img){
     if(isFileMediaItem(img) || isTextMediaItem(img)) return `<div class="media-thumb file-thumb" data-media-url="${escapeAttr(img.url || '')}" data-media-kind="${escapeAttr(mediaKindForItem(img))}"><i data-lucide="${isTextMediaItem(img) ? 'file-text' : 'file'}"></i><span>${escapeHtml(img.name || (isTextMediaItem(img) ? 'Text' : 'File'))}</span></div>`;
     if(isAudioMediaItem(img)) return `<div class="media-thumb audio-thumb" data-media-url="${escapeAttr(img.url || '')}" data-media-kind="audio"><i data-lucide="file-audio"></i><span>${escapeHtml(img.name || 'Audio')}</span></div>`;
     if(isVideoMediaItem(img)) return `<div class="media-thumb video-thumb">${isInlineVideoActive(img) ? smartVideoPlayerHtml(img.url || '') : `${smartVideoPreviewHtml(img, 512, 'alt=""')}<button class="smart-video-play thumb-video-play" type="button" title="播放"><i data-lucide="play"></i></button>`}</div>`;
-    return smartPreviewImgHtml(img, 512, 'draggable="false"');
+    return smartCanvasPreviewImgHtml(img, 512, 'draggable="false"');
 }
 function imageResolutionLabel(img){
     const w = Number(img?.natural_w || img?.width || img?.w || 0);
@@ -6247,7 +6254,7 @@ function singleMediaHtml(img, w, h){
     if(isFileMediaItem(img) || isTextMediaItem(img)) return `<div class="node-img media-card media-file-card" style="width:${w}px;height:${h}px"><div class="media-card-icon"><i data-lucide="${isTextMediaItem(img) ? 'file-text' : 'file'}"></i></div><div class="media-card-title">${escapeHtml(img.name || (isTextMediaItem(img) ? 'Text' : 'File'))}</div><div class="media-card-sub">${isTextMediaItem(img) ? 'TEXT' : 'FILE'}</div></div>`;
     if(isAudioMediaItem(img)) return `<div class="node-img media-card media-audio-card" style="width:${w}px;height:${h}px"><div class="media-card-icon"><i data-lucide="file-audio"></i></div><div class="media-card-title">${escapeHtml(img.name || 'Audio')}</div><div class="media-card-sub">AUDIO</div><audio src="${escapeAttr(img.url || '')}" data-url="${escapeAttr(img.url || '')}" controls preload="metadata"></audio></div>`;
     if(isVideoMediaItem(img)) return `<div class="node-img media-card media-video-card" style="width:${w}px;height:${h}px">${isInlineVideoActive(img) ? smartVideoPlayerHtml(img.url || '') : `${smartVideoPreviewHtml(img, 768, 'alt=""')}<button class="smart-video-play" type="button" title="播放"><i data-lucide="play"></i></button>`}</div>`;
-    return smartPreviewImgHtml(img, 768, `class="node-img" draggable="false" style="width:${w}px;height:${h}px"`);
+    return smartCanvasPreviewImgHtml(img, 768, `class="node-img" draggable="false" style="width:${w}px;height:${h}px"`);
 }
 function smartNodeHasLiveMedia(node){
     return Boolean(!node?.pending && (node?.images || []).some(img => img?.url));
@@ -6681,7 +6688,7 @@ function renderSmartCanvasLog(){
             const label = imageResolutionLabel(item);
             if(smartMediaIsExpired(item)) return smartExpiredMediaHtml('', '', true);
             const attrs = `data-url="${safe}" data-kind="${escapeAttr(kind)}" title="${escapeAttr(label || 'output')}" alt="output"`;
-            return kind === 'video' ? smartVideoPreviewHtml(item, 256, attrs) : smartPreviewImgHtml(item, 256, attrs);
+            return kind === 'video' ? smartVideoPreviewHtml(item, 256, attrs) : smartCanvasPreviewImgHtml(item, 256, attrs);
         }).join('');
         const date = new Date(log.createdAt || Date.now()).toLocaleString(window.StudioI18n?.lang() === 'en' ? 'en-US' : 'zh-CN');
         const req = log.request || {};
@@ -11397,7 +11404,7 @@ function renderInputThumbsRow(node){
             ? `<div class="input-thumb-audio"><i data-lucide="file-audio"></i></div>`
             : isVid
             ? smartVideoPreviewHtml(img, 256, 'draggable="false" alt=""')
-            : smartPreviewImgHtml(img, 256, 'draggable="false"');
+            : smartCanvasPreviewImgHtml(img, 256, 'draggable="false"');
         const count = (mediaCounters[kind] = (mediaCounters[kind] || 0) + 1);
         const label = kind === 'audio' ? `音频${count}` : kind === 'video' ? `视频${count}` : `图${count}`;
         const sourceUrl = img.originalLocalUrl || img.url || '';
@@ -12000,14 +12007,14 @@ function mentionTokenMediaHtml(img, kind=mediaKindForItem(img)){
     if(kind === 'video'){
         return smartVideoPreviewHtml(img, 256, 'alt=""');
     }
-    return smartPreviewImgHtml(img, 256, 'alt=""');
+    return smartCanvasPreviewImgHtml(img, 256, 'alt=""');
 }
 function mentionOptionMediaHtml(img){
     const kind = mediaKindForItem(img);
     if(kind === 'audio'){
         return `<div class="media-thumb audio-thumb mention-option-audio"><i data-lucide="file-audio"></i><span>${escapeHtml(img.alias || img.name || 'Audio')}</span></div>`;
     }
-    return kind === 'video' ? smartVideoPreviewHtml(img, 256, 'alt=""') : smartPreviewImgHtml(img, 256, 'alt=""');
+    return kind === 'video' ? smartVideoPreviewHtml(img, 256, 'alt=""') : smartCanvasPreviewImgHtml(img, 256, 'alt=""');
 }
 function promptHtmlWithMentionTokens(text, refs=[]){
     const value = String(text || '');
