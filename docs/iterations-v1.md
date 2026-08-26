@@ -126,7 +126,9 @@
 - 修复画布节点处于缩放/平移 world 容器时被浏览器原生懒加载判定为离屏的问题；画布预览改为主动加载，素材库列表仍保留懒加载。
 - 网关最多 4 路缩略图并发、原图编辑/下载、媒体归属和保存删除行为保持；无新增数据库迁移。
 - 验证：画布媒体回归 `6 passed`；JavaScript 语法和 `git diff --check` 通过。
-- 源码标签：`v1.0.18`；生产镜像摘要待发布后记录。
+- 源码标签：`v1.0.18`；生产镜像：`ghcr.io/nannannan1111111/ai-platform@sha256:8dc61f05819cdf7a1644749d750150d9373850479eb56fffd674ec41fcd7419a`。
+- 生产已部署：2026-08-26；V37 摘要 `sha256:4561442ff28bcca77818b779f8154dfae4ddf585f095dbb97c704a0f2f50067d` 已保留为 `creative-studio:single-host-rollback-v37` 回滚副本。
+- 部署后验证：数据库迁移、健康/就绪检查及 Web/10 Worker 镜像一致性通过；公网 HTTPS `/readyz` 返回 `{"status":"ready"}`；运行容器数量 11。
 
 ## V1.0.13 / V33 已部署
 
