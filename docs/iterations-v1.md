@@ -79,6 +79,15 @@
 - 生产镜像：`creative-studio:single-host-candidate-v32@sha256:a0be4436d537ae85678bc931faecd288b5330d382711b4e662175abf18dcc9d0`；回滚镜像 `creative-studio:single-host-rollback-v32` 已保留。
 - 部署脚本迁移、健康、就绪及 Web/10 Worker 镜像一致性检查通过；无新增迁移，生产 head 保持 `0066_prompt_safety_risk_events`。
 
+## V1.0.14 / V34 候选
+
+- 基于已部署 V33 继续开发，分支 `codex/v34-image-order-canvas-display`。
+- 图片生成页历史恢复改为最新任务/最新图片优先，单张缩略图成功即渲染，随后按时间顺序补齐旧结果；不重新提交任务，不改变扣费、退款或额度流水。
+- 画布媒体显示统一从 `media_id` 或旧 `/api/v1/media/{id}/content` 地址解析媒体，优先鉴权缩略图，缩略图失败才读取鉴权原图 Blob；覆盖生成、上传和派生图片，稳定文档不保存 Blob/占位图。
+- 无新增迁移，不删除历史画布、媒体、参考图或用户资源。
+- 新增 `backend/tests/test_v34_image_order_canvas_display.py`，并通过图片任务/媒体/画布定向测试、JS/Python 语法和 `git diff --check`。
+- 建议标签 `v1.0.14`，建议镜像 `creative-studio:single-host-candidate-v34`；部署前保留 V33 回滚镜像，部署后补录实际摘要与健康检查证据。
+
 ## V1.0.13 / V33 已部署
 
 - 基于已部署 V32 `893376e`，分支 `codex/v33-progressive-workspace-loading`，未从旧目录、旧 ZIP、V17、干净 `main` 或其他 worktree 覆盖。

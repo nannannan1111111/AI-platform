@@ -1861,29 +1861,32 @@ async function restoreRecentImageResults() {
     state.imageSessionEntries
       .filter(entry => entry.status === 'pending')
       .forEach(entry => { void observeImageSessionTask(entry); });
-    await runBounded(restoredEntries.filter(entry => entry.status === 'restoring'), 3, async entry => {
+    // Restore newest history first and commit one thumbnail at a time. This
+    // keeps the first visible result stable while older history catches up.
+    for (const entry of [...restoredEntries].reverse().filter(item => item.status === 'restoring')) {
       try {
         const taskMedia = await optionalApi(`/api/v1/generation-tasks/${encodeURIComponent(entry.taskId)}/media`, []);
         const available = taskMedia.filter(item => item.state === 'temporary'
-          && (!item.expires_at || new Date(item.expires_at).getTime() > Date.now()));
-        const restored = await runBounded(available, 3, async (item, index) => {
+          && (!item.expires_at || new Date(item.expires_at).getTime() > Date.now()))
+          .sort((left, right) => Date.parse(right.created_at || '') - Date.parse(left.created_at || ''));
+        for (const [index, item] of available.entries()) {
           try {
-            return {
+            const restored = {
               ...item,
-              sessionNumber: entry.startNumber + index,
+              sessionNumber: entry.startNumber + available.length - 1 - index,
               // The workbench always paints a bounded thumbnail. The original
               // bytes are fetched only when the user opens or downloads one.
               previewUrl: await authenticatedMediaObjectUrl(item, { thumbnail: true }),
             };
+            entry.media.unshift(restored);
+            entry.quantity = entry.media.length;
+            entry.status = 'succeeded';
+            renderImageSessionResults();
           } catch (_error) {
             // An expired or concurrently deleted object is simply absent from the restored 24-hour workspace.
-            return null;
           }
-        });
-        const media = restored.filter(Boolean);
-        entry.media = media;
-        entry.quantity = media.length;
-        entry.status = media.length ? 'succeeded' : 'unavailable';
+        }
+        if (!entry.media.length) entry.status = 'unavailable';
       } catch (_error) {
         entry.status = 'unavailable';
       } finally {
@@ -1892,7 +1895,7 @@ async function restoreRecentImageResults() {
           renderImageSessionResults();
         }
       }
-    });
+    }
   } finally {
     state.imageHistoryLoading = false;
     state.imageHistoryHydrated = true;

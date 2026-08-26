@@ -344,6 +344,10 @@
       Object.entries(value).map(([key, item]) => [key, displayCanvasValue(item)]),
     );
     const mediaId = mediaIdFromValue(display);
+    if (mediaId) {
+      display.media_id = display.media_id || mediaId;
+      display.url = mediaContentUrl(mediaId);
+    }
     const imageMedia = display.kind === 'image'
       || String(display.mime_type || '').startsWith('image/')
       || Boolean(display.media_id && !display.kind && !display.mime_type);
@@ -449,12 +453,18 @@
       return;
     }
     if (!value || typeof value !== 'object') return;
-    if (value.media_id && (!value.thumbnail || !String(value.thumbnail).startsWith('blob:'))) {
+    const mediaId = mediaIdFromValue(value);
+    if (mediaId) {
+      value.media_id = value.media_id || mediaId;
+      value.url = mediaContentUrl(mediaId);
+    }
+    if (mediaId && (!value.thumbnail || !String(value.thumbnail).startsWith('blob:'))) {
       try {
-        value.thumbnail = await loadThumbnailMedia(value.media_id);
-        value.url = mediaContentUrl(value.media_id);
+        value.thumbnail = await loadThumbnailMedia(mediaId);
       } catch (_) {
-        // Keep the stable authenticated path when a preview cannot be hydrated yet.
+        // A corrupt or unavailable thumbnail must not make a valid canvas image
+        // disappear. Use the authenticated original only as the last fallback.
+        try { value.thumbnail = await loadOriginalMedia(mediaId); } catch (_) {}
       }
     }
     await Promise.all(Object.values(value).map(restoreCanvasMediaPreviews));

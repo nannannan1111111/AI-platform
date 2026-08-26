@@ -44,6 +44,15 @@ V32 于 2026-08-26 部署完成：Web 与 10 个 Generation Worker 使用同一�
 - 回滚镜像：`creative-studio:single-host-rollback-v32`（由当前 V31 运行 Web 容器保留）。
 - 验证：部署脚本迁移、健康、就绪和 Web/10 Worker 镜像一致性检查通过；运行容器数量 11，`/healthz` 与 `/readyz` 均返回正常。
 
+## V1.0.14 / V34 候选
+
+- 基线：已部署 V33 `a0e76e1`，分支 `codex/v34-image-order-canvas-display`；本地记录提交 `489392c`，未从旧目录、旧 ZIP、V17、干净 `main` 或其他 worktree 覆盖。
+- 功能：图片生成页历史结果从最新任务和最新图片开始，逐张受控恢复并立即渲染；画布统一识别媒体 ID/旧 content URL，优先加载鉴权缩略图，缩略图失败时受控回退鉴权原图，覆盖生成、上传和派生图片。
+- 数据安全：无新增数据库迁移；不重提上游任务、不重复扣费/退款或额度流水，不删除历史画布、媒体、参考图或用户资源；原图仍仅在缩略图失败或用户放大、编辑、下载时读取。
+- 建议源码标签：`v1.0.14`；建议镜像：`creative-studio:single-host-candidate-v34`。
+- 验证：V34 新增测试 `2 passed`；图片生成/任务/媒体/画布定向测试 `88 passed`；JS/Python 语法和 `git diff --check` 通过。部署后需记录实际镜像摘要、健康/就绪、迁移 head 及 Web/10 Worker 一致性。
+- 部署状态：待部署；V33 镜像 `creative-studio:single-host-candidate-v33@sha256:67e3640ed3a4fea16583d9a7632df82ef36892622773ad64f7c6588eda16801b` 保留为回滚基线。
+
 ## V1.0.13 / V33 已部署
 
 - 基线：已部署 V32 `893376e`，分支 `codex/v33-progressive-workspace-loading`。
