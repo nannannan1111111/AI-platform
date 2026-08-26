@@ -86,7 +86,7 @@
 - 画布编辑器先渲染保存的节点、连线和视口，后台恢复任务与媒体；会话快照只存稳定 JSON，重进后后台校验并合并结果。
 - 图片生成页先展示任务摘要，历史成功结果按 3 路受控并发加载缩略图；活动任务保持既有 SSE 与受控轮询。
 - 无新增数据库迁移；不重提上游、不重复扣费/退款、不改额度流水，不删除历史画布或媒体。
-- 镜像：`creative-studio:single-host-candidate-v33@sha256:67e3640ed3a4fea16583d82ef36892622773ad64f7c6588eda16801b`；回滚镜像 `creative-studio:single-host-rollback-v32@sha256:a0be4436d537ae85678bc931faecd288b5330d382711b4e662175abf18dcc9d0` 已保留。
+- 镜像：`creative-studio:single-host-candidate-v33@sha256:67e3640ed3a4fea16583d9a7632df82ef36892622773ad64f7c6588eda16801b`；回滚镜像 `creative-studio:single-host-rollback-v32@sha256:a0be4436d537ae85678bc931faecd288b5330d382711b4e662175abf18dcc9d0` 已保留。
 - 部署时间：`2026-08-26T02:23:39Z`；Web 与 10 个 Worker 使用同一摘要，容器数量 11。
 - 部署后验证：`/healthz` 和 `/readyz` 通过，迁移 head 为 `0066_prompt_safety_risk_events`。
 - 验证：完整后端 `647 passed, 5 skipped`，另有一个 V30 既有 `admin-vue-8` 静态缓存断言失败；V33 渐进测试 `2 passed`，定向 `330 passed, 1 skipped`，前端构建、JS/Python 语法和 `git diff --check` 通过。
