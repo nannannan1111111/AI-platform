@@ -80,7 +80,9 @@ V32 于 2026-08-26 部署完成：Web 与 10 个 Generation Worker 使用同一�
 - 修复画布缩略图回填被任务恢复流程阻断的问题；缩略图独立优先加载，任务恢复失败不再阻断图片显示。
 - 无新增数据库迁移；V36 的最多 4 并发缩略图、原图编辑/下载、媒体保存/删除归属保持。
 - 验证：画布媒体回归 `5 passed`；JavaScript 语法和 `git diff --check` 通过。
-- 建议源码标签：`v1.0.17`；镜像摘要待发布后记录；部署前保留 V36 摘要 `sha256:02cfe651ce5671320dd8da4e037249412cb8ae4436693b04d4770c5b8cc9cd27` 用于回滚。
+- 源码标签：`v1.0.17`；镜像：`ghcr.io/nannannan1111111/ai-platform@sha256:4561442ff28bcca77818b779f8154dfae4ddf585f095dbb97c704a0f2f50067d`。
+- 生产已部署：2026-08-26；V36 摘要 `sha256:02cfe651ce5671320dd8da4e037249412cb8ae4436693b04d4770c5b8cc9cd27` 已保留为 `creative-studio:single-host-rollback-v36` 回滚副本。
+- 部署后验证：数据库迁移、健康/就绪检查及 Web/10 Worker 镜像一致性通过；公网 HTTPS `/readyz` 返回 `{"status":"ready"}`；运行容器数量 11。
 
 ## V1.0.13 / V33 已部署
 
