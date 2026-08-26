@@ -5541,6 +5541,9 @@ async function loadCanvas(){
         updateProviderModels();
         applyViewport();
         render();
+        // 缩略图回填可能在编辑器监听事件前完成；消费网关缓存的快照，避免首屏永久停留在透明占位图。
+        const hydratedCanvas = window.SaaSCanvasGateway?.consumeCanvasHydration?.();
+        if (hydratedCanvas) applyMergedServerCanvas(hydratedCanvas);
         // Availability checks are useful for stale media labels, but must not
         // block the saved canvas and its thumbnails from becoming interactive.
         void refreshSmartMediaAvailability().then(changed => { if(changed) render(); });

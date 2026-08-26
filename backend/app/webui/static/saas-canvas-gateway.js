@@ -41,6 +41,7 @@
   let thumbnailActive = 0;
   const originalMediaUrls = new Map();
   const originalMediaLoads = new Map();
+  let pendingCanvasHydration = null;
   const completedGenerationTaskNotices = new Set();
   const progressiveThumbnailPlaceholder = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 
@@ -79,6 +80,11 @@
     loadOriginalMedia,
     cachedOriginalMediaUrl(value) {
       return originalMediaUrls.get(mediaIdFromValue(value)) || '';
+    },
+    consumeCanvasHydration() {
+      const value = pendingCanvasHydration;
+      pendingCanvasHydration = null;
+      return value;
     },
     editorUrl(id, kind) {
       const encodedId = encodeURIComponent(id);
@@ -475,8 +481,10 @@
 
   function emitCanvasHydration(value) {
     if (typeof window.dispatchEvent !== 'function' || typeof window.CustomEvent !== 'function') return;
+    const hydratedCanvas = legacyCanvas(value);
+    pendingCanvasHydration = hydratedCanvas;
     window.dispatchEvent(new CustomEvent('saas-canvas-hydrated', {
-      detail: { canvas: legacyCanvas(value), hydrationOnly: true },
+      detail: { canvas: hydratedCanvas, hydrationOnly: true },
     }));
   }
 

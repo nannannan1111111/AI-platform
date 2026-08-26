@@ -182,3 +182,56 @@ URL.revokeObjectURL = () => {};
         check=False,
     )
     assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
+
+
+def test_v35_canvas_hydration_snapshot_survives_early_event() -> None:
+    client = TestClient(create_app(InMemoryAccountAccess()))
+    gateway = client.get("/web-assets/saas-canvas-gateway.js")
+    harness = r"""
+const assert = require('node:assert/strict');
+const source = require('node:fs').readFileSync(0, 'utf8');
+const imageCount = 2;
+const images = Array.from({length:imageCount}, (_, index) => ({
+  media_id:`media-early-${index + 1}`, kind:'image',
+  url:`/api/v1/media/media-early-${index + 1}/content`,
+}));
+const canvas = {
+  canvas_id:'canvas-early-hydration', title:'Early hydration', kind:'smart', version:1,
+  created_at:'2026-08-20T00:00:00Z', updated_at:'2026-08-20T00:00:00Z',
+  document:{nodes:[{id:'n1', type:'smart-image', images}], connections:[]},
+};
+const json = value => new Response(JSON.stringify(value), {status:200});
+async function nativeFetch(input) {
+  const path = String(input);
+  if (path === '/api/v1/canvases/canvas-early-hydration') return json(canvas);
+  if (path.includes('/generation-tasks/')) return json([]);
+  if (path.includes('/thumbnail?size=512')) return new Response(new Uint8Array([1,2,3]), {status:200});
+  throw new Error(`unexpected request: ${path}`);
+}
+global.window = {
+  location:{pathname:'/workspace/canvases/canvas-early-hydration/smart', origin:'http://test', replace(){}},
+  sessionStorage:{getItem(){return 'token';}, setItem(){}, removeItem(){}},
+  fetch:nativeFetch, setTimeout, clearTimeout,
+  addEventListener(){},
+  dispatchEvent(){},
+  CustomEvent:class CustomEvent {constructor(type, init){this.type=type; this.detail=init.detail;}},
+};
+global.document = {getElementById(){return null;}, body:{appendChild(){}}, createElement(){return {};}};
+URL.createObjectURL = () => 'blob:early-thumb'; URL.revokeObjectURL = () => {};
+(async () => {
+  eval(source);
+  const response = await window.fetch('/api/canvases/canvas-early-hydration');
+  await response.json();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const hydrated = window.SaaSCanvasGateway.consumeCanvasHydration();
+  assert.ok(hydrated, 'early hydration should be buffered');
+  assert.equal(hydrated.nodes[0].images.filter(item => item.thumbnail === 'blob:early-thumb').length, imageCount);
+})().catch(error => {console.error(error.stack || error); process.exitCode = 1;});
+"""
+    result = subprocess.run(
+        ["node", "-e", harness],
+        input=gateway.text.encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
