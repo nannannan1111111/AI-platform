@@ -60,8 +60,9 @@ V32 于 2026-08-26 部署完成：Web 与 10 个 Generation Worker 使用同一�
 - 功能：兼容常见 OpenAI-compatible LLM 返回格式，保持单次上游调用；放宽局部重绘 `image2` 别名识别并同步 Provider/前端判断，保留 `image21` 边界拒绝。
 - 数据安全：无新增数据库迁移；不重复上游请求、不重复扣费/退款或额度流水；不删除历史媒体、画布或用户资源；V34 缩略图和原图交互行为保持。
 - 验证：定向 `80 passed`；完整后端 `659 passed, 5 skipped`，另有 V34 既有 `admin-vue-8` 静态断言失败；JS 语法和 `git diff --check` 通过。
-- 建议源码标签：`v1.0.15`；建议镜像：`creative-studio:single-host-candidate-v35`。
-- 生产部署：待完成。部署后必须记录实际镜像摘要、上一版本回滚摘要、部署时间、迁移 head、健康/就绪和 Web/10 Worker 一致性。
+- 建议源码标签：`v1.0.15`；镜像：`ghcr.io/nannannan1111111/ai-platform@sha256:75665f6e296ce59555191408b07ef43120164b2cc0f6ce0230878cce0ee9cfd5`。
+- 生产部署：已完成，时间 `2026-08-26T07:01:47Z`；Web 与 10 个 Worker 使用同一 V35 摘要，V34 镜像摘要 `sha256:f3ae5b7fb609dd8baeeeaa2522b70a5df6891b47d592acc6cc63dd3ef7f89fe2` 已保留用于回滚。
+- 验证：数据库迁移成功；本机 `/healthz`、`/readyz` 和公网 HTTPS `/readyz` 通过；运行容器数量 11。
 
 ## V1.0.13 / V33 已部署
 

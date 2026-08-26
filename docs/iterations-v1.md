@@ -96,7 +96,9 @@
 - 局部重绘统一放宽 `image2`、`image-2`、`gptimage2` 及带安全前后缀的模型名；`image21` 等不满足版本边界的名称仍拒绝。后端校验、Provider 流式模式和前端档位判断同步。
 - 无新增数据库迁移，不改变 V34 的画布缩略图优先、最多 4 并发、点击编辑下载使用原图、最近记录查看使用原图行为。
 - 定向测试 `80 passed`；完整后端 `659 passed, 5 skipped`，另有一个 V34 之前已存在的 `admin-vue-8` 静态版本断言失败（源码实际为 `admin-vue-9`）。JS 语法和 `git diff --check` 通过。
-- 源码标签 `v1.0.15`，建议镜像 `creative-studio:single-host-candidate-v35`；生产部署结果待补充实际签名摘要和验收证据。
+- 源码标签 `v1.0.15`，生产镜像 `ghcr.io/nannannan1111111/ai-platform@sha256:75665f6e296ce59555191408b07ef43120164b2cc0f6ce0230878cce0ee9cfd5`。
+- 生产已部署：`2026-08-26T07:01:47Z`；Web 与 10 个 Worker 使用同一 V35 摘要，V34 摘要 `sha256:f3ae5b7fb609dd8baeeeaa2522b70a5df6891b47d592acc6cc63dd3ef7f89fe2` 保留回滚。
+- 部署后验证：数据库迁移成功，本机 `/healthz`、`/readyz` 和公网 HTTPS `/readyz` 通过，运行容器数量 11。
 
 ## V1.0.13 / V33 已部署
 
