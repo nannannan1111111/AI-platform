@@ -86,7 +86,8 @@
 - 画布媒体显示统一从 `media_id` 或旧 `/api/v1/media/{id}/content` 地址解析媒体，优先鉴权缩略图，缩略图失败才读取鉴权原图 Blob；覆盖生成、上传和派生图片，稳定文档不保存 Blob/占位图。
 - 无新增迁移，不删除历史画布、媒体、参考图或用户资源。
 - 新增 `backend/tests/test_v34_image_order_canvas_display.py`，并通过图片任务/媒体/画布定向测试、JS/Python 语法和 `git diff --check`。
-- 建议标签 `v1.0.14`，建议镜像 `creative-studio:single-host-candidate-v34`；部署前保留 V33 回滚镜像，部署后补录实际摘要与健康检查证据。
+- 源码标签 `v1.0.14`，生产镜像 `creative-studio:single-host-candidate-v34@sha256:f3ae5b7fb609dd8baeeeaa2522b70a5df6891b47d592acc6cc63dd3ef7f89fe2`；回滚镜像 `creative-studio:single-host-rollback-v33@sha256:67e3640ed3a4fea16583d9a7632df82ef36892622773ad64f7c6588eda16801b`。
+- 部署时间 `2026-08-26T04:26:08Z`；Web 与 10 个 Worker 使用同一摘要，运行容器数量 11；迁移 head `0066_prompt_safety_risk_events`；发布脚本迁移、健康、就绪和镜像一致性门禁通过。
 
 ## V1.0.13 / V33 已部署
 

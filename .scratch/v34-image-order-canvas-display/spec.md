@@ -21,3 +21,10 @@
 
 - 图片页顺序恢复、画布媒体 URL 归一化定向测试。
 - V33 既有任务/媒体/SSE/画布测试、JS/Python 语法、前端构建和 `git diff --check`。
+
+## 发布
+
+- V34 源码提交：`18e1cb0`，标签：`v1.0.14`。
+- 生产镜像：`creative-studio:single-host-candidate-v34@sha256:f3ae5b7fb609dd8baeeeaa2522b70a5df6891b47d592acc6cc63dd3ef7f89fe2`。
+- 回滚镜像：`creative-studio:single-host-rollback-v33@sha256:67e3640ed3a4fea16583d9a7632df82ef36892622773ad64f7c6588eda16801b`。
+- 部署时间：`2026-08-26T04:26:08Z`；Web/10 Worker 一致性、迁移 head、健康和就绪检查通过。
