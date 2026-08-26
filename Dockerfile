@@ -42,6 +42,9 @@ LABEL org.opencontainers.image.created=${BUILD_CREATED} \
       org.opencontainers.image.title="Creative Studio SaaS" \
       org.opencontainers.image.version=${VERSION}
 
+# Refresh the locked Alpine runtime's security libraries at image build time.
+RUN apk upgrade --no-cache libcrypto3 libssl3
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/backend
