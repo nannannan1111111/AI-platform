@@ -44,14 +44,16 @@ V32 于 2026-08-26 部署完成：Web 与 10 个 Generation Worker 使用同一�
 - 回滚镜像：`creative-studio:single-host-rollback-v32`（由当前 V31 运行 Web 容器保留）。
 - 验证：部署脚本迁移、健康、就绪和 Web/10 Worker 镜像一致性检查通过；运行容器数量 11，`/healthz` 与 `/readyz` 均返回正常。
 
-## V1.0.13 / V33 候选
+## V1.0.13 / V33 已部署
 
 - 基线：已部署 V32 `893376e`，分支 `codex/v33-progressive-workspace-loading`。
 - 功能：画布列表元数据与缩略图渐进加载；编辑器保存文档先渲染、任务和媒体后台恢复；会话快照支持快速重进；图片页任务摘要先出、历史缩略图受控恢复。
 - 数据库迁移：无新增迁移，生产 head 保持 `0066_prompt_safety_risk_events`。
 - 数据安全：不重提上游任务、不重复扣费/退款、不改额度流水；不删除媒体或历史画布；原图仍只在放大、编辑或下载时读取。
-- 候选镜像：`creative-studio:single-host-candidate-v33`，部署后记录实际摘要。
-- 回滚：部署前保留 `creative-studio:single-host-rollback-v32`，失败自动恢复 V32。
+- 镜像：`creative-studio:single-host-candidate-v33@sha256:67e3640ed3a4fea16583d82ef36892622773ad64f7c6588eda16801b`。
+- 回滚镜像：`creative-studio:single-host-rollback-v32@sha256:a0be4436d537ae85678bc931faecd288b5330d382711b4e662175abf18dcc9d0`，部署前已保留，失败自动恢复 V32。
+- 部署时间：`2026-08-26T02:23:39Z`。
+- 部署后 Web 与 10 个 Worker 使用同一 V33 摘要；运行容器数量 11。
 - 验证：后端 `647 passed, 5 skipped`，其中 1 个 V30 既有 `admin-vue-8` 静态缓存断言失败；V33 渐进测试 `2 passed`，任务/画布/媒体/SSE 定向 `330 passed, 1 skipped`，前端构建、JS/Python 语法及 `git diff --check` 通过。
 
 后续部署必须遵循：
