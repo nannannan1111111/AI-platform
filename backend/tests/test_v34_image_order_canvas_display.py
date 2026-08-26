@@ -184,6 +184,52 @@ URL.revokeObjectURL = () => {};
     assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
 
 
+def test_v36_canvas_thumbnail_hydration_is_not_blocked_by_task_recovery() -> None:
+    client = TestClient(create_app(InMemoryAccountAccess()))
+    gateway = client.get("/web-assets/saas-canvas-gateway.js")
+    harness = r"""
+const assert = require('node:assert/strict');
+const source = require('node:fs').readFileSync(0, 'utf8');
+let hydrated = null;
+const canvas = {canvas_id:'canvas-independent-hydration', title:'Independent', kind:'smart', version:1,
+  created_at:'2026-08-20T00:00:00Z', updated_at:'2026-08-20T00:00:00Z',
+  document:{nodes:[{id:'n1', type:'smart-image', images:[{
+    media_id:'media-independent', kind:'image', url:'/api/v1/media/media-independent/content',
+  }]}], connections:[]}};
+const json = value => new Response(JSON.stringify(value), {status:200});
+async function nativeFetch(input) {
+  const path = String(input);
+  if (path === '/api/v1/canvases/canvas-independent-hydration') return json(canvas);
+  if (path === '/api/v1/media/media-independent/thumbnail?size=512') return new Response(new Uint8Array([1,2,3]), {status:200});
+  if (path.includes('/generation-tasks/')) throw new Error('task recovery unavailable');
+  throw new Error(`unexpected request: ${path}`);
+}
+global.window = {
+  location:{pathname:'/workspace/canvases/canvas-independent-hydration/smart', origin:'http://test', replace(){}},
+  sessionStorage:{getItem(){return 'token';}, setItem(){}, removeItem(){}},
+  fetch:nativeFetch, setTimeout, clearTimeout, addEventListener(){},
+  dispatchEvent(event){if(event.type === 'saas-canvas-hydrated') hydrated = event.detail.canvas;},
+  CustomEvent:class CustomEvent {constructor(type, init){this.type=type; this.detail=init.detail;}},
+};
+global.document = {getElementById(){return null;}, body:{appendChild(){}}, createElement(){return {};}};
+URL.createObjectURL = () => 'blob:independent-thumb'; URL.revokeObjectURL = () => {};
+(async () => {
+  eval(source);
+  const response = await window.fetch('/api/canvases/canvas-independent-hydration');
+  await response.json();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(hydrated.nodes[0].images[0].thumbnail, 'blob:independent-thumb');
+})().catch(error => {console.error(error.stack || error); process.exitCode = 1;});
+"""
+    result = subprocess.run(
+        ["node", "-e", harness],
+        input=gateway.text.encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
+
+
 def test_v35_canvas_hydration_snapshot_survives_early_event() -> None:
     client = TestClient(create_app(InMemoryAccountAccess()))
     gateway = client.get("/web-assets/saas-canvas-gateway.js")

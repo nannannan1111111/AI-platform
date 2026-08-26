@@ -74,6 +74,14 @@ V32 于 2026-08-26 部署完成：Web 与 10 个 Generation Worker 使用同一�
 - 生产部署：已完成，时间 `2026-08-26T08:35:59Z`；V35 镜像摘要 `sha256:75665f6e296ce59555191408b07ef43120164b2cc0f6ce0230878cce0ee9cfd5` 已保留在 `/etc/infinite-canvas/single-host.env.v35-backup` 用于回滚。
 - 验证：供应链门禁全绿；数据库迁移成功；本机 `/healthz`、`/readyz` 和公网 HTTPS `/readyz` 通过；Web 与 10 个 Worker 使用同一 V36 摘要，运行容器数量 11。
 
+## V1.0.17 / V37 候选
+
+- 基于已部署 V36，继续在分支 `codex/v35-llm-image2` 上修改，未从其他版本或 worktree 覆盖。
+- 修复画布缩略图回填被任务恢复流程阻断的问题；缩略图独立优先加载，任务恢复失败不再阻断图片显示。
+- 无新增数据库迁移；V36 的最多 4 并发缩略图、原图编辑/下载、媒体保存/删除归属保持。
+- 验证：画布媒体回归 `5 passed`；JavaScript 语法和 `git diff --check` 通过。
+- 建议源码标签：`v1.0.17`；镜像摘要待发布后记录；部署前保留 V36 摘要 `sha256:02cfe651ce5671320dd8da4e037249412cb8ae4436693b04d4770c5b8cc9cd27` 用于回滚。
+
 ## V1.0.13 / V33 已部署
 
 - 基线：已部署 V32 `893376e`，分支 `codex/v33-progressive-workspace-loading`。

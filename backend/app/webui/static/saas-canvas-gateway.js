@@ -1118,19 +1118,29 @@
       // Revalidate a stale snapshot in the background while keeping the editor
       // interactive. A newer server snapshot is merged through the same event.
       void (async () => {
+        let value;
         try {
           const freshResponse = await saasFetch(`/api/v1/canvases/${encodeURIComponent(id)}`);
           if (!freshResponse.ok) return;
-          const value = await freshResponse.json();
+          value = await freshResponse.json();
           writeCanvasSnapshot(value);
-          await recoverUntrackedCanvasTasks(value);
-          await restoreGenerationResults(value);
+        } catch (_) {
+          return;
+        }
+        // Media hydration is independent from optional task reconciliation.
+        // A failed recovery request must never leave saved images as transparent
+        // placeholders when their authenticated media is still readable.
+        try {
           let emittedMediaHydration = false;
           await restoreCanvasMediaPreviews(value.document, () => {
             emittedMediaHydration = true;
             emitCanvasHydration(value);
           });
           if (!emittedMediaHydration) emitCanvasHydration(value);
+        } catch (_) {}
+        try {
+          await recoverUntrackedCanvasTasks(value);
+          await restoreGenerationResults(value);
         } catch (_) {}
       })();
       return localJsonResponse({ canvas: initialCanvas }, 200);
@@ -1152,19 +1162,19 @@
     // Task reconciliation and preview hydration must not block the saved
     // document from becoming interactive.
     void (async () => {
+      let emittedMediaHydration = false;
       try {
-        await recoverUntrackedCanvasTasks(value);
-        await restoreGenerationResults(value);
-        let emittedMediaHydration = false;
         await restoreCanvasMediaPreviews(value.document, () => {
           emittedMediaHydration = true;
           emitCanvasHydration(value);
         });
         writeCanvasSnapshot(value);
         if (!emittedMediaHydration) emitCanvasHydration(value);
-      } catch (_) {
-        // Keep the saved canvas usable if optional background hydration fails.
-      }
+      } catch (_) {}
+      try {
+        await recoverUntrackedCanvasTasks(value);
+        await restoreGenerationResults(value);
+      } catch (_) {}
     })();
     return jsonResponse(response, { canvas: initialCanvas });
   }
